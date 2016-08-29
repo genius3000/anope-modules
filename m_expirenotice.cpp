@@ -115,8 +115,6 @@ bool AllAliasesExpiring(NickCore *nc)
 		{
 			if (ns_notice_mail && !na->nc->email.empty())
 			{
-				//Anope::string subject = _("Nickname Expiring"),
-				//	message = _("Your nickname %n will expire: %t!\n\n%N IRC Administration");
 				Anope::string subject = Config->GetModule(this)->Get<const Anope::string>("ns_expiring_subject"),
 					message = Config->GetModule(this)->Get<const Anope::string>("ns_expiring_message");
 				message = message.replace_all_cs("%n", na->nick);
@@ -128,7 +126,6 @@ bool AllAliasesExpiring(NickCore *nc)
 			// If the NickCore has more than one NickAlias (not all expiring right now), send a memo
 			if (ns_notice_memo && na->nc->aliases->size() > 1 && !AllAliasesExpiring(na->nc))
 			{
-				//Anope::string message = _("Your nickname %n will expire: %t!");
 				Anope::string message = Config->GetModule(this)->Get<const Anope::string>("ns_expiring_memo");
 				message = message.replace_all_cs("%n", na->nick);
 				message = message.replace_all_cs("%t", Anope::strftime(expire_at, na->nc));
@@ -146,8 +143,6 @@ bool AllAliasesExpiring(NickCore *nc)
 
 		if (ns_notice_mail && !na->nc->email.empty())
 		{
-			//Anope::string subject = _("Nickname Expired"),
-			//	message = _("Your nickname %n has just expired!\n\n%N IRC Administration");
 			Anope::string subject = Config->GetModule(this)->Get<const Anope::string>("ns_expired_subject"),
 				message = Config->GetModule(this)->Get<const Anope::string>("ns_expired_message");
 			message = message.replace_all_cs("%n", na->nick);
@@ -158,7 +153,6 @@ bool AllAliasesExpiring(NickCore *nc)
 		// If the NickCore has more than one NickAlias (not all expiring right now), send a memo
 		if (ns_notice_memo && na->nc->aliases->size() > 1 && !AllAliasesExpiring(na->nc))
 		{
-			//Anope::string message = _("Your nickname %n has expired!");
 			Anope::string message = Config->GetModule(this)->Get<const Anope::string>("ns_expired_memo");
 			message = message.replace_all_cs("%n", na->nick);
 
@@ -190,8 +184,6 @@ bool AllAliasesExpiring(NickCore *nc)
 				*successor = ci->GetSuccessor();
 			if (cs_notice_mail)
 			{
-				//Anope::string subject = _("Channel Expiring"),
-				//	message = _("Your channel %n will expire: %t!\n\n%N IRC Administration");
 				Anope::string subject = Config->GetModule(this)->Get<const Anope::string>("cs_expiring_subject"),
 					message = Config->GetModule(this)->Get<const Anope::string>("cs_expiring_message");
 				message = message.replace_all_cs("%c", ci->name);
@@ -212,7 +204,6 @@ bool AllAliasesExpiring(NickCore *nc)
 			}
 			if (cs_notice_memo)
 			{
-				//Anope::string message = _("Your channel %n will expire: %t!");
 				Anope::string message = Config->GetModule(this)->Get<const Anope::string>("cs_expiring_memo");
 				message = message.replace_all_cs("%c", ci->name);
 				if (founder && !AllAliasesExpiring(founder))
@@ -242,8 +233,6 @@ bool AllAliasesExpiring(NickCore *nc)
 
 		if (cs_notice_mail)
 		{
-			//Anope::string subject = _("Channel Expired"),
-			//	message = _("Your channel %n has expired!\n\n%N IRC Administration");
 			Anope::string subject = Config->GetModule(this)->Get<const Anope::string>("cs_expired_subject"),
 				message = Config->GetModule(this)->Get<const Anope::string>("cs_expired_message");
 			message = message.replace_all_cs("%c", ci->name);
