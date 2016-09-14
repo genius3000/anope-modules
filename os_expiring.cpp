@@ -29,7 +29,7 @@ class CommandOSExpiring : public Command
         unsigned nnicks = 0;
         time_t trange;
         time_t nick_expiry = Config->GetModule("nickserv")->Get<time_t>("expire", "21d");
-        time_t nick_uc_expiry = Config->GetModule("nickserv")->Get<time_t>("unconfirmedexpire", "1d");
+        time_t nick_uc_expiry = Config->GetModule("ns_register")->Get<time_t>("unconfirmedexpire", "1d");
         unsigned listmax = Config->GetModule("nickserv")->Get<unsigned>("listmax", "50");
 
         if (range.equals_ci("default"))
@@ -262,7 +262,7 @@ class OSExpiring : public Module
             throw ModuleException("Requires version 2.x.x of Anope.");
         }
         this->SetAuthor("genius3000");
-        this->SetVersion("1.0.2");
+        this->SetVersion("1.0.3");
     }
 };
 
