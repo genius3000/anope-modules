@@ -53,7 +53,9 @@ module
 	cs_expired_memo = "Your channel %c has expired."
 }
  *
-*/
+ * Logging of "soon to expire" nicks or channels can be enabled by using
+ * "nickserv/preexpire" and "chanserv/preexpire" in the "other" category
+ */
 
 #include "module.h"
 
@@ -68,19 +70,20 @@ class ExpireNotice : public Module
 	time_t expiretimeout;
 	Anope::string networkname;
 
-/* We check this to prevent a race condition of sending
- * a memo to a currently expiring NickCore. It seems
- * we mess up MemoServ when we do that. */
-bool AllAliasesExpiring(NickCore *nc)
-{
-	for (unsigned i = 0; i < nc->aliases->size(); ++i)
+	/* We check this to prevent a race condition of sending
+	 * a memo to a currently expiring NickCore. It seems
+	 * we mess up MemoServ when we do that.
+	 */
+	bool AllAliasesExpiring(NickCore *nc)
 	{
-		NickAlias *na = nc->aliases->at(i);
-		if (Anope::CurTime - na->last_seen < ns_expire_time)
-			return false;
+		for (unsigned i = 0; i < nc->aliases->size(); ++i)
+		{
+			NickAlias *na = nc->aliases->at(i);
+			if (Anope::CurTime - na->last_seen < ns_expire_time)
+				return false;
+		}
+		return true;
 	}
-	return true;
-}
 
  public:
 	ExpireNotice(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, THIRD)
@@ -90,29 +93,32 @@ bool AllAliasesExpiring(NickCore *nc)
 		if (!ModuleManager::FindModule("nickserv") && !ModuleManager::FindModule("chanserv"))
 			throw ModuleException("Neither NickServ nor ChanServ are loaded, this module is useless!");
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.0.2");
+		this->SetVersion("1.0.3");
 	}
 
 	void OnPreNickExpire(NickAlias *na, bool &expire) anope_override
 	{
-		// If expired, not enabled or neither notice method is enabled, we do nothing
+		/* If expired, not enabled or neither notice method is enabled, we do nothing */
 		if (expire || !ns_notice_expiring || (!ns_notice_mail && !ns_notice_memo))
 			return;
-		// We don't do anything with unconfirmed or no_expire nicks
+		/* We don't do anything with unconfirmed or no_expire nicks */
 		if (na->nc->HasExt("UNCONFIRMED") || na->HasExt("NS_NO_EXPIRE"))
 			return;
 
-		// If notice_time is set too high, make it a quarter of the expire time
+		/* If notice_time is set too high, make it a quarter of the expire time */
 		if (ns_notice_time >= ns_expire_time)
 			ns_notice_time = ns_expire_time / 4;
 
 		time_t expire_at = na->last_seen + ns_expire_time;
 		time_t notice_at = expire_at - ns_notice_time;
 
-		// Send notice when time is between the notice_at and the next ExpireTick
-		// This should keep from sending multiple notices
+		/* Send notice when time is between the notice_at and the next ExpireTick
+		 * This should keep from sending multiple notices
+		 */
 		if (Anope::CurTime >= notice_at && Anope::CurTime <= notice_at + expiretimeout - 2)
 		{
+			Log(LOG_NORMAL, "nickserv/preexpire", Config->GetClient("NickServ")) << "Soon to expire nickname " << na->nick << " (group: " << na->nc->display << "). Expires: " << Anope::strftime(expire_at);
+
 			if (ns_notice_mail && !na->nc->email.empty())
 			{
 				Anope::string subject = Config->GetModule(this)->Get<const Anope::string>("ns_expiring_subject"),
@@ -123,7 +129,7 @@ bool AllAliasesExpiring(NickCore *nc)
 
 				Mail::Send(na->nc, subject, message);
 			}
-			// If the NickCore has more than one NickAlias (not all expiring right now), send a memo
+			/* If the NickCore has more than one NickAlias (not all expiring right now), send a memo */
 			if (ns_notice_memo && na->nc->aliases->size() > 1 && !AllAliasesExpiring(na->nc))
 			{
 				Anope::string message = Config->GetModule(this)->Get<const Anope::string>("ns_expiring_memo");
@@ -137,7 +143,7 @@ bool AllAliasesExpiring(NickCore *nc)
 
 	void OnNickExpire(NickAlias *na) anope_override
 	{
-		// Do nothing if not enabled or neither notice method is enabled
+		/* Do nothing if not enabled or neither notice method is enabled */
 		if (!ns_notice_expired || (!ns_notice_mail && ! ns_notice_memo))
 			return;
 
@@ -150,7 +156,7 @@ bool AllAliasesExpiring(NickCore *nc)
 
 			Mail::Send(na->nc, subject, message);
 		}
-		// If the NickCore has more than one NickAlias (not all expiring right now), send a memo
+		/* If the NickCore has more than one NickAlias (not all expiring right now), send a memo */
 		if (ns_notice_memo && na->nc->aliases->size() > 1 && !AllAliasesExpiring(na->nc))
 		{
 			Anope::string message = Config->GetModule(this)->Get<const Anope::string>("ns_expired_memo");
@@ -162,26 +168,47 @@ bool AllAliasesExpiring(NickCore *nc)
 
 	void OnPreChanExpire(ChannelInfo *ci, bool &expire) anope_override
 	{
-		// Do nothing if expired, not enabled or neither notice method is enabled
+		/* Do nothing if expired, not enabled or neither notice method is enabled */
 		if (expire || !cs_notice_expiring || (!cs_notice_mail && !cs_notice_memo))
 			return;
-		// We don't do anything with no_expire chans
+		/* We don't do anything with no_expire chans */
 		if (ci->HasExt("CS_NO_EXPIRE"))
 			return;
 
-		// If notice_time is set too high, make it a quarter of the expire time
+		/* If notice_time is set too high, make it a quarter of the expire time */
 		if (cs_notice_time >= cs_expire_time)
 			cs_notice_time = cs_expire_time / 4;
 
 		time_t expire_at = ci->last_used + cs_expire_time;
 		time_t notice_at = expire_at - cs_notice_time;
 
-		// Send notice when time is between the notice_at and the next ExpireTick
-		// This should keep from sending multiple notices
+		/* Send notice when time is between the notice_at and the next ExpireTick
+		 * This should keep from sending multiple notices
+		 */
 		if (Anope::CurTime >= notice_at && Anope::CurTime <= notice_at + expiretimeout - 2)
 		{
+			/* Anope only checks for Access of Users in the channel if said channel
+			 * is slated to expire right now. We need to run this check here to skip
+			 * sending a false notice. We don't update ci->last_used time though.
+			 */
+			if (ci->c)
+			{
+				AccessGroup ag;
+
+				for (Channel::ChanUserList::const_iterator cit = ci->c->users.begin(), cit_end = ci->c->users.end(); cit != cit_end; ++cit)
+				{
+					ag = ci->AccessFor(cit->second->user, false);
+					/* If this user has Channel Access, we stop now */
+					if (!ag.empty() || ag.founder)
+						return;
+				}
+			}
+
 			NickCore *founder = ci->GetFounder(),
 				*successor = ci->GetSuccessor();
+
+			Log(LOG_NORMAL, "chanserv/preexpire", Config->GetClient("ChanServ")) << "Soon to expire channel " << ci->name << " (founder: " << (founder ? founder->display : "(none)") << ") (successor: " << (successor ? successor->display : "(none)") << "). Expires: " << Anope::strftime(expire_at);
+
 			if (cs_notice_mail)
 			{
 				Anope::string subject = Config->GetModule(this)->Get<const Anope::string>("cs_expiring_subject"),
@@ -206,6 +233,7 @@ bool AllAliasesExpiring(NickCore *nc)
 			{
 				Anope::string message = Config->GetModule(this)->Get<const Anope::string>("cs_expiring_memo");
 				message = message.replace_all_cs("%c", ci->name);
+
 				if (founder && !AllAliasesExpiring(founder))
 				{
 					message = message.replace_all_cs("%t", Anope::strftime(expire_at, founder));
@@ -224,7 +252,7 @@ bool AllAliasesExpiring(NickCore *nc)
 
 	void OnChanExpire(ChannelInfo *ci) anope_override
 	{
-		// Do nothing if not enabled or neither notice method is enabled
+		/* Do nothing if not enabled or neither notice method is enabled */
 		if (!cs_notice_expired || (!cs_notice_mail && !cs_notice_memo))
 			return;
 
@@ -245,9 +273,9 @@ bool AllAliasesExpiring(NickCore *nc)
 		}
 		if (cs_notice_memo)
 		{
-			//Anope::string message = _("Your channel %n has expired!");
 			Anope::string message = Config->GetModule(this)->Get<const Anope::string>("cs_expired_memo");
 			message = message.replace_all_cs("%c", ci->name);
+
 			if (founder && !AllAliasesExpiring(founder))
 				memoserv->Send(Config->GetClient("ChanServ")->nick, founder->display, message, true);
 			if (successor && !AllAliasesExpiring(successor))
@@ -257,7 +285,7 @@ bool AllAliasesExpiring(NickCore *nc)
 
 	void OnReload(Configuration::Conf *conf) anope_override
 	{
-		// Load configuration values once at Config read
+		/* Load configuration values at Config read */
 		ns_notice_expiring = Config->GetModule(this)->Get<bool>("ns_notice_expiring", "no");
 		ns_notice_expired = Config->GetModule(this)->Get<bool>("ns_notice_expired", "no");
 		ns_notice_mail = Config->GetModule(this)->Get<bool>("ns_notice_mail", "no");
@@ -274,6 +302,7 @@ bool AllAliasesExpiring(NickCore *nc)
 
 		expiretimeout = Config->GetBlock("options")->Get<time_t>("expiretimeout", "30m");
 		networkname = Config->GetBlock("networkinfo")->Get<const Anope::string>("networkname");
+
 		if (!Config->GetBlock("mail")->Get<bool>("usemail"))
 			ns_notice_mail = cs_notice_mail = false;
 		if (!memoserv)
