@@ -59,6 +59,7 @@ module
 
 #include "module.h"
 
+
 static ServiceReference<MemoServService> memoserv("MemoServService", "MemoServ");
 
 class ExpireNotice : public Module
@@ -88,12 +89,14 @@ class ExpireNotice : public Module
  public:
 	ExpireNotice(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, THIRD)
 	{
-		if (Anope::VersionMajor() < 2)
-			throw ModuleException("Requires version 2.x.x of Anope.");
+		if (Anope::VersionMajor() != 2 || Anope::VersionMinor() != 0)
+			throw ModuleException("Requires version 2.0.x of Anope.");
+
 		if (!ModuleManager::FindModule("nickserv") && !ModuleManager::FindModule("chanserv"))
 			throw ModuleException("Neither NickServ nor ChanServ are loaded, this module is useless!");
+
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.0.3");
+		this->SetVersion("1.0.4");
 	}
 
 	void OnPreNickExpire(NickAlias *na, bool &expire) anope_override
