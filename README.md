@@ -8,6 +8,10 @@ A less restrictive join flood protection, a flood of unregistered users will loc
 channel to registered users only. It will do this either with a channel mode (if available)
 or via temporary kick-bans.
 
+### cs_topichistory
+Stores a (config set maximum) number of historical topics for a channel. Allows easy
+restoration of a historical topic, especially when the topic is accidently changed.
+
 ### m_expirenotice
 To send a notice (via email and/or memo) to a user that their registered nickname or
 channel is soon to expire and/or expired. Fully configurable with what to send for and
