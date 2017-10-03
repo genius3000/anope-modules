@@ -21,6 +21,7 @@ command { service = "ChanServ"; name = "SET JOINFLOOD"; command = "chanserv/set/
 #include "module.h"
 
 
+/* Store the settings, joins, and bans  */
 struct JoinCounter
 {
 	unsigned int joins;
@@ -52,6 +53,7 @@ struct JoinCounter
 	}
 };
 
+/* Timer to disengage protection after the set duration */
 class DisengageTimer : public Timer
 {
   private:
@@ -93,7 +95,9 @@ class CommandCSSetJoinFlood : public Command
 	CommandCSSetJoinFlood(Module *creator, const Anope::string &cname = "chanserv/set/joinflood") : Command(creator, cname, 2, 5)
 	{
 		this->SetDesc("Enables a join flood protection of allowing registered users only");
-		this->SetSyntax("\037channel\037 {\037ON\037 [joins [secs [duration]]] | \037OFF\037 | \037SHOW\037}");
+		this->SetSyntax("\037channel\037 ON [\037joins\037 [\037secs\037 [\037duration\037]]]");
+		this->SetSyntax("\037channel\037 OFF");
+		this->SetSyntax("\037channel\037 SHOW");
 	}
 
 	void Execute(CommandSource &source, const std::vector<Anope::string> &params) anope_override
@@ -238,8 +242,11 @@ class CSSetJoinFlood : public Module
 		commandcssetjoinflood(this),
 		joincounter(this, "joincounter")
 	{
+		if (Anope::VersionMajor() != 2 || Anope::VersionMinor() != 0)
+			throw ModuleException("Requires version 2.0.x of Anope.");
+
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.0.0");
+		this->SetVersion("1.0.1");
 	}
 
 	void OnUplinkSync(Server*) anope_override
@@ -263,10 +270,8 @@ class CSSetJoinFlood : public Module
 	{
 		if (Me && !Me->IsSynced())
 			return;
-
 		if (!joinflood.HasExt(c->ci))
 			return;
-
 		if (u->IsIdentified(true) || u->server->IsULined() || !u->server->IsSynced())
 			return;
 
