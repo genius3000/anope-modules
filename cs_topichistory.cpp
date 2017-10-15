@@ -21,41 +21,17 @@ command { service = "ChanServ"; name = "TOPICHISTORY"; command = "chanserv/topic
 
 
 /* Individual Topic History entries */
-struct TopicHistoryEntry
+struct TopicHistoryEntry : Serializable
 {
- protected:
-	TopicHistoryEntry() { }
-
  public:
 	Anope::string chan;
 	Anope::string topic;
 	Anope::string setter;
 	time_t when;
 
-	virtual ~TopicHistoryEntry() { }
-};
+	TopicHistoryEntry() : Serializable("TopicHistory") { }
 
-/* Per channel List of Topic History Entries */
-struct TopicHistoryList : Serialize::Checker<std::vector<TopicHistoryEntry *> >
-{
- protected:
-	TopicHistoryList() : Serialize::Checker<std::vector<TopicHistoryEntry *> >("TopicHistory") { }
-
- public:
-	virtual ~TopicHistoryList()
-	{
-		for (unsigned i = (*this)->size(); i > 0; --i)
-			delete (*this)->at(i - 1);
-	}
-
-	virtual TopicHistoryEntry* Create() = 0;
-};
-
-struct TopicHistoryEntryImpl : TopicHistoryEntry, Serializable
-{
-	TopicHistoryEntryImpl() : Serializable("TopicHistory") { }
-
-	TopicHistoryEntryImpl(ChannelInfo *c, const Anope::string &ctopic, const Anope::string &csetter, time_t ctime = Anope::CurTime) : Serializable("TopicHistory")
+	TopicHistoryEntry(ChannelInfo *c, const Anope::string &ctopic, const Anope::string &csetter, time_t ctime = Anope::CurTime) : Serializable("TopicHistory")
 	{
 		this->chan = c->name;
 		this->topic = ctopic;
@@ -63,7 +39,7 @@ struct TopicHistoryEntryImpl : TopicHistoryEntry, Serializable
 		this->when = ctime;
 	}
 
-	~TopicHistoryEntryImpl();
+	~TopicHistoryEntry();
 
 	void Serialize(Serialize::Data &data) const anope_override
 	{
@@ -76,17 +52,20 @@ struct TopicHistoryEntryImpl : TopicHistoryEntry, Serializable
 	static Serializable* Unserialize(Serializable *obj, Serialize::Data &data);
 };
 
-struct TopicHistoryListImpl : TopicHistoryList
+/* Per channel List of Topic History Entries */
+struct TopicHistoryList : Serialize::Checker<std::vector<TopicHistoryEntry *> >
 {
-	TopicHistoryListImpl(Extensible *) { }
+ public:
+	TopicHistoryList(Extensible *) : Serialize::Checker<std::vector<TopicHistoryEntry *> >("TopicHistory") { }
 
-	TopicHistoryEntry* Create() anope_override
+	~TopicHistoryList()
 	{
-		return new TopicHistoryEntryImpl;
+		for (unsigned i = (*this)->size(); i > 0; --i)
+			delete (*this)->at(i - 1);
 	}
 };
 
-TopicHistoryEntryImpl::~TopicHistoryEntryImpl()
+TopicHistoryEntry::~TopicHistoryEntry()
 {
 	ChannelInfo *ci = ChannelInfo::Find(this->chan);
 	if (!ci)
@@ -101,7 +80,7 @@ TopicHistoryEntryImpl::~TopicHistoryEntryImpl()
 		(*entries)->erase(it);
 }
 
-Serializable* TopicHistoryEntryImpl::Unserialize(Serializable *obj, Serialize::Data &data)
+Serializable* TopicHistoryEntry::Unserialize(Serializable *obj, Serialize::Data &data)
 {
 	Anope::string schan, stopic, ssetter;
 	time_t swhen;
@@ -114,7 +93,7 @@ Serializable* TopicHistoryEntryImpl::Unserialize(Serializable *obj, Serialize::D
 
 	if (obj)
 	{
-		TopicHistoryEntryImpl *entry = anope_dynamic_static_cast<TopicHistoryEntryImpl *>(obj);
+		TopicHistoryEntry *entry = anope_dynamic_static_cast<TopicHistoryEntry *>(obj);
 		entry->chan = ci->name;
 		data["topic"] >> entry->topic;
 		data["setter"] >> entry->setter;
@@ -125,7 +104,7 @@ Serializable* TopicHistoryEntryImpl::Unserialize(Serializable *obj, Serialize::D
 	data["topic"] >> stopic;
 	data["setter"] >> ssetter;
 	data["when"] >> swhen;
-	TopicHistoryEntryImpl *entry = new TopicHistoryEntryImpl(ci, stopic, ssetter, swhen);
+	TopicHistoryEntry *entry = new TopicHistoryEntry(ci, stopic, ssetter, swhen);
 
 	TopicHistoryList *entries = ci->Require<TopicHistoryList>("topichistorylist");
 	(*entries)->insert((*entries)->begin(), entry);
@@ -139,6 +118,7 @@ class CommandCSTopicHistory : public Command
 	{
 		TopicHistoryList *entries = ci->Require<TopicHistoryList>("topichistorylist");
 
+		/* First entry is the current topic, we hide that */
 		if ((*entries)->size() <= 1)
 		{
 			source.Reply("Topic history list for \002%s\002 is empty.", ci->name.c_str());
@@ -171,7 +151,12 @@ class CommandCSTopicHistory : public Command
 
 	void DoClear(CommandSource &source, ChannelInfo *ci)
 	{
+		/* Removing the List deletes all entries tied to it */
 		ci->Shrink<TopicHistoryList>("topichistorylist");
+		/* Create a new List and add the current topic, just like when enabling the option */
+		TopicHistoryList *entries = ci->Require<TopicHistoryList>("topichistorylist");
+		if ((*entries)->empty())
+			(*entries)->push_back(new TopicHistoryEntry(ci, ci->last_topic, ci->last_topic_setter, ci->last_topic_time));
 
 		Log(source.AccessFor(ci).HasPriv("TOPIC") ? LOG_COMMAND : LOG_OVERRIDE, source, this, ci) << "to remove all historical topics.";
 		source.Reply("Topic history for \002%s\002 has been cleared.", ci->name.c_str());
@@ -181,14 +166,14 @@ class CommandCSTopicHistory : public Command
 	{
 		TopicHistoryList *entries = ci->Require<TopicHistoryList>("topichistorylist");
 
-		if (!entrynum.is_pos_number_only())
-		{
-			source.Reply("Topic history \002%s\002 not found for channel \002%s\002.", entrynum.c_str(), ci->name.c_str());
-			return;
-		}
-		else if ((*entries)->empty())
+		if ((*entries)->empty())
 		{
 			source.Reply("Topic history list for \002%s\002 is empty.", ci->name.c_str());
+			return;
+		}
+		else if (!entrynum.is_pos_number_only())
+		{
+			source.Reply("Topic history \002%s\002 not found for channel \002%s\002.", entrynum.c_str(), ci->name.c_str());
 			return;
 		}
 
@@ -276,7 +261,7 @@ class CommandCSSetTopicHistory : public Command
  public:
 	CommandCSSetTopicHistory(Module *creator, const Anope::string &cname = "chanserv/set/topichistory") : Command(creator, cname, 2, 2)
 	{
-		this->SetDesc("Enables topic history (list and set previous topics).");
+		this->SetDesc("Enables topic history (list and set previous topics)");
 		this->SetSyntax("\037channel\037 {ON | OFF}");
 	}
 
@@ -315,7 +300,7 @@ class CommandCSSetTopicHistory : public Command
 			/* If this channel's topic history list is empty, add the current topic as a starting point. */
 			TopicHistoryList *entries = ci->Require<TopicHistoryList>("topichistorylist");
 			if ((*entries)->empty())
-				(*entries)->push_back(new TopicHistoryEntryImpl(ci, ci->last_topic, ci->last_topic_setter, ci->last_topic_time));
+				(*entries)->push_back(new TopicHistoryEntry(ci, ci->last_topic, ci->last_topic_setter, ci->last_topic_time));
 		}
 		else if (params[1].equals_ci("OFF"))
 		{
@@ -335,9 +320,18 @@ class CommandCSSetTopicHistory : public Command
 		source.Reply(" ");
 		source.Reply("Enables or disables a history of channel topics.");
 		source.Reply(" ");
-		source.Reply("The \002ON\002 command simply enables the option.");
+		source.Reply("The \002ON\002 command enables the option.");
 		source.Reply(" ");
 		source.Reply("The \002OFF\002 command clears the list and disables the option.");
+		source.Reply(" ");
+
+		/* Get (and verify) the maxhistory config value to display */
+		unsigned maxhistory = Config->GetModule(this->module)->Get<unsigned>("maxhistory", "3");
+		if (maxhistory < 1)
+			maxhistory = 1;
+		else if (maxhistory > 20)
+			maxhistory = 20;
+		source.Reply("There is a maximum Topic History list size of %d topics.", maxhistory);
 		source.Reply(" ");
 
 		/* Look up and display the proper Bot nick and Command name for using this option */
@@ -357,7 +351,7 @@ class CSTopicHistory : public Module
 	CommandCSTopicHistory commandcstopichistory;
 	CommandCSSetTopicHistory commandcssettopichistory;
 	SerializableExtensibleItem<bool> topichistory;
-	ExtensibleItem<TopicHistoryListImpl> thl;
+	ExtensibleItem<TopicHistoryList> thl;
 	Serialize::Type topichistory_type;
 	unsigned maxhistory;
 
@@ -366,7 +360,7 @@ class CSTopicHistory : public Module
 	CSTopicHistory(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, THIRD),
 		commandcstopichistory(this), commandcssettopichistory(this),
 		topichistory(this, "TOPICHISTORY"), thl(this, "topichistorylist"),
-		topichistory_type("TopicHistory", TopicHistoryEntryImpl::Unserialize)
+		topichistory_type("TopicHistory", TopicHistoryEntry::Unserialize)
 	{
 		if (Anope::VersionMajor() != 2 || Anope::VersionMinor() != 0)
 			throw ModuleException("Requires version 2.0.x of Anope.");
@@ -418,14 +412,14 @@ class CSTopicHistory : public Module
 		if ((*entries)->size() >= (this->maxhistory + 1))
 			delete (*entries)->at((*entries)->size() - 1);
 
-		/* The below code is needed because:
+		/* The below code is doing:
 		 * - string 'user' is likely a UUID, we want their nick
 		 * - get the topic set time so a channel creation doesn't trick us into using current time
 		 * - add this entry to the beginning to keep them in chronological order
 		 */
 		User *u = User::Find(user, false);
 		time_t ts = c->ci->last_topic_time ? c->ci->last_topic_time : Anope::CurTime;
-		(*entries)->insert((*entries)->begin(), new TopicHistoryEntryImpl(c->ci, topic, u ? u->nick : "unknown", ts));
+		(*entries)->insert((*entries)->begin(), new TopicHistoryEntry(c->ci, topic, u ? u->nick : "unknown", ts));
 	}
 
 	void OnChanInfo(CommandSource &source, ChannelInfo *ci, InfoFormatter &info, bool show_all) anope_override
