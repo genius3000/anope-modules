@@ -27,7 +27,6 @@ log { target = "#services-notify"; bot = "OperServ"; other = "notify/..."; }
 
 /* TODO/Thoughts
  * - Test, test, and more test!
- * - Improve the logging strings/calls?
  */
 
 #include "module.h"
@@ -62,8 +61,8 @@ struct NotifyEntry : Serializable
 };
 
 /* Maps to track matched Notify Entries and Users */
-typedef std::multimap<NotifyEntry *, User *> PerEntryMap;
-typedef std::multimap<User *, NotifyEntry *> PerUserMap;
+typedef std::multimap<const NotifyEntry *, const User *> PerEntryMap;
+typedef std::multimap<const User *, const NotifyEntry *> PerUserMap;
 
 /* Service to access and modify Notify Entries and currently Matched users */
 class NotifyService : public Service
@@ -120,7 +119,7 @@ class NotifyService : public Service
 	/* Expire a Notify Entry */
 	void Expire(NotifyEntry *ne)
 	{
-		Log(LOG_NORMAL, "expire/notify", Config->GetClient("OperServ")) << "Expiring Notify entry " << ne->mask;
+		Log(Config->GetClient("OperServ"), "expire/notify") << "Expiring Notify entry " << ne->mask;
 		delete ne;
 	}
 
@@ -158,29 +157,8 @@ class NotifyService : public Service
 		return NULL;
 	}
 
-	/* Return a vector of (wildcard) matching Notify Entries given a mask */
-	std::vector<NotifyEntry *> FindNotifies(const Anope::string &mask)
-	{
-		std::vector<NotifyEntry *> matches;
-
-		for (unsigned i = notifies->size(); i > 0; --i)
-		{
-			NotifyEntry *ne = notifies->at(i - 1);
-
-			if (!ne)
-				continue;
-
-			if (ne->expires && ne->expires <= Anope::CurTime)
-				Expire(ne);
-			else if (Anope::Match(mask, ne->mask, false, true))
-				matches.push_back(ne);
-		}
-
-		return matches;
-	}
-
 	/* Check if a User matches to a mask */
-	bool Check(User *u, const Anope::string &mask)
+	bool Check(const User *u, const Anope::string &mask)
 	{
 		/* Regex mask: Matches against u@h and n!u@h#r only */
 		if (mask.length() >= 2 && mask[0] == '/' && mask[mask.length() - 1] == '/')
@@ -192,12 +170,23 @@ class NotifyService : public Service
 
 		/* Use 'modes' Entry to perform matching per item (nick, user, host, real) */
 		Entry notify_mask("", mask);
-		return notify_mask.Matches(u, true);
+		return notify_mask.Matches(const_cast<User *>(u), true);
 	}
 
-	std::vector<NotifyEntry *> &GetNotifies()
+	std::vector<NotifyEntry *> GetNotifies()
 	{
-		return *notifies;
+		std::vector<NotifyEntry *> list;
+
+		for (unsigned i = notifies->size(); i > 0; --i)
+		{
+			NotifyEntry *ne = notifies->at(i - 1);
+			if (ne && ne->expires && ne->expires <= Anope::CurTime)
+				Expire(ne);
+			else if (ne)
+				list.insert(list.begin(), ne);
+		}
+
+		return list;
 	}
 
 	unsigned GetNotifiesCount()
@@ -206,7 +195,7 @@ class NotifyService : public Service
 	}
 
 	/* Check if a User is already mapped to a specific Notify Entry */
-	bool ExistsAlready(User *u, NotifyEntry *ne)
+	bool ExistsAlready(const User *u, const NotifyEntry *ne)
 	{
 		std::pair<PerUserMap::const_iterator, PerUserMap::const_iterator> itpair = match_user.equal_range(u);
 		for (PerUserMap::const_iterator it = itpair.first; it != itpair.second; ++it)
@@ -219,14 +208,14 @@ class NotifyService : public Service
 	}
 
 	/* Map a User as matched to a specific Notify Entry */
-	void AddMatch(User *u, NotifyEntry *ne)
+	void AddMatch(const User *u, const NotifyEntry *ne)
 	{
 		match_entry.insert(std::make_pair(ne, u));
 		match_user.insert(std::make_pair(u, ne));
 	}
 
 	/* Remove a User from the matched Maps */
-	void DelMatch(User *u)
+	void DelMatch(const User *u)
 	{
 		match_user.erase(u);
 		for (PerEntryMap::reverse_iterator it = match_entry.rbegin(); it != match_entry.rend(); )
@@ -238,24 +227,14 @@ class NotifyService : public Service
 		}
 	}
 
-	PerEntryMap &GetEntryMap()
-	{
-		return match_entry;
-	}
-
-	PerUserMap &GetUserMap()
-	{
-		return match_user;
-	}
-
 	/* Check if a User is matched to any Notify Entries already */
-	bool IsMatch(User *u)
+	bool IsMatch(const User *u)
 	{
 		return (match_user.count(u) > 0);
 	}
 
 	/* Check if a User is matched to a Notify Entry with a specific flag */
-	bool HasFlag(User *u, char flag)
+	bool HasFlag(const User *u, char flag)
 	{
 		std::pair<PerUserMap::const_iterator, PerUserMap::const_iterator> itpair = match_user.equal_range(u);
 		for (PerUserMap::const_iterator it = itpair.first; it != itpair.second; ++it)
@@ -265,6 +244,16 @@ class NotifyService : public Service
 		}
 
 		return false;
+	}
+
+	PerEntryMap &GetEntryMap()
+	{
+		return match_entry;
+	}
+
+	PerUserMap &GetUserMap()
+	{
+		return match_user;
 	}
 };
 
@@ -335,7 +324,7 @@ class NotifyDelCallback : public NumberList
 		if (!number)
 			return;
 
-		NotifyEntry *ne = notify_service->GetNotify(number - 1);
+		const NotifyEntry *ne = notify_service->GetNotify(number - 1);
 		if (!ne)
 			return;
 
@@ -345,7 +334,7 @@ class NotifyDelCallback : public NumberList
 		DoDel(source, ne);
 	}
 
-	static void DoDel(CommandSource &source, NotifyEntry *ne)
+	static void DoDel(CommandSource &source, const NotifyEntry *ne)
 	{
 		delete ne;
 	}
@@ -511,7 +500,7 @@ class CommandOSNotify : public Command
 			}
 		}
 
-		Log(LOG_ADMIN, source, this) << "to " << (created ? "add" : "modify") << " a Notify on " << mask << " for reason: " << reason << " (matches: " << matches << " users)";
+		Log(LOG_ADMIN, source, this) << "to " << (created ? "add" : "modify") << " a Notify on " << mask << " for reason: " << reason << " (matches: " << matches << " user(s))";
 		source.Reply("%s a Notify on %s which matched %d user(s).", (created ? "Added" : "Modified"), mask.c_str(), matches);
 	}
 
@@ -538,7 +527,7 @@ class CommandOSNotify : public Command
 		}
 		else
 		{
-			NotifyEntry *ne = nts->FindExactNotify(match);
+			const NotifyEntry *ne = nts->FindExactNotify(match);
 
 			if (!ne)
 			{
@@ -585,7 +574,7 @@ class CommandOSNotify : public Command
 					entry["Reason"] = ne->reason;
 					entry["Created"] = Anope::strftime(ne->created, source.nc, true);
 					entry["By"] = ne->creator;
-					entry["Expires"] = ne->expires ? Anope::Expires(ne->expires, source.nc) : "Never";
+					entry["Expires"] = Anope::Expires(ne->expires, source.nc);
 					list.AddEntry(entry);
 				}
 			} nl_list(source, list, match);
@@ -593,9 +582,10 @@ class CommandOSNotify : public Command
 		}
 		else
 		{
-			for (unsigned i = 0; i < nts->GetNotifiesCount(); ++i)
+			const std::vector<NotifyEntry *> &notifies = nts->GetNotifies();
+			for (unsigned i = 0; i < notifies.size(); ++i)
 			{
-				const NotifyEntry *ne = nts->GetNotify(i);
+				const NotifyEntry *ne = notifies.at(i);
 				if (!ne)
 					continue;
 
@@ -608,7 +598,7 @@ class CommandOSNotify : public Command
 					entry["Reason"] = ne->reason;
 					entry["Created"] = Anope::strftime(ne->created, source.nc, true);
 					entry["By"] = ne->creator;
-					entry["Expires"] = ne->expires ? Anope::Expires(ne->expires, source.nc) : "Never";
+					entry["Expires"] = Anope::Expires(ne->expires, source.nc);
 					list.AddEntry(entry);
 				}
 			}
@@ -691,8 +681,8 @@ class CommandOSNotify : public Command
 		Anope::string last_mask;
 		for (PerEntryMap::const_iterator it = current.begin(); it != current.end(); ++it)
 		{
-			NotifyEntry *ne = it->first;
-			User *u = it->second;
+			const NotifyEntry *ne = it->first;
+			const User *u = it->second;
 			if (!ne || !u)
 				continue;
 
@@ -821,11 +811,13 @@ class CommandOSNotify : public Command
 			     "nick!user@host#real name, though all that is required is user@host.\n"
 			     "If a real name is specified, the reason must be prepended with a :.\n"
 			     "Flags are used to decide what to track, for all use \037*\037.\n"
-			     "Acceptable flags are \037c\037 for connects, \037d\037 for disconnects,\n"
-			     "\037j\037 for joins, \037k\037 for kicks, \037m\037 for channel modes,\n"
-			     "\037n\037 for nick changes, \037p\037 for parts, \037s\037 for most\n"
-			     "services commands, \037S\037 for more services commands,\n"
-			     "\037t\037 for topics, and \037u\037 for usermodes.\n"
+			     "The available flags are:\n"
+			     "c - User Connections\td - User Disconnections\n"
+			     "j - Channel Joins\tk - Channel Kicks\n"
+			     "m - Channel Modes\tn - User Nick changes\n"
+			     "p - Channel Parts\ts - Most Services commands\n"
+			     "t - Channel Topics\tu - User Modes\n"
+			     "S - More Services commands\n"
 			     "\037expiry\037 is specified as an integer followed by one of \037d\37\n"
 			     "(days), \037h\037 (hours), or \037m\037 (minutes). Combinations (such as\n"
 			     "\0371h30m\037) are not permitted. If a unit specifier is not included,\n"
@@ -869,54 +861,46 @@ class OSNotify : public Module
 
 	BotInfo *OperServ;
 
-	const Anope::string BuildNUHR(User *u)
+	const Anope::string BuildNUHR(const User *u)
 	{
 		if (!u)
 			return "unknown";
 
-		return Anope::string(u->nick + "!" + u->GetIdent() + "@" + u->host + " (" + u->realname + ")");
+		return Anope::string(u->nick + "!" + u->GetIdent() + "@" + u->host + "#" + u->realname);
 	}
 
- public:
-	OSNotify(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, THIRD),
-		notifyService(this), notifyentry_type("NotifyEntry", NotifyEntry::Unserialize),
-		commandosnotify(this), OperServ(NULL)
+	void NLog(const Anope::string &t, const char *m, ...)
 	{
-		if (Anope::VersionMajor() != 2 || Anope::VersionMinor() != 0)
-			throw ModuleException("Requires version 2.0.x of Anope.");
+		char buf[4096];
 
-		this->SetAuthor("genius3000");
-		this->SetVersion("0.6.0");
+		va_list args;
+		va_start(args, m);
+		vsnprintf(buf, sizeof(buf), m, args);
+		Log(LOG_NORMAL, "notify/"+t, OperServ) << "NOTIFY: " << buf;
+		va_end(args);
 	}
 
-	void OnReload(Configuration::Conf *conf) anope_override
+	void Init()
 	{
-		OperServ = conf->GetClient("OperServ");
-	}
-
-	void OnUplinkSync(Server *) anope_override
-	{
-		if (notifyService.GetNotifiesCount() == 0)
+		const std::vector<NotifyEntry *> &notifies = notifyService.GetNotifies();
+		if (notifies.empty())
 			return;
-
-		std::vector<NotifyEntry *> notifies = notifyService.GetNotifies();
 
 		unsigned matches = 0;
 		for (user_map::const_iterator uit = UserListByNick.begin(); uit != UserListByNick.end(); ++uit)
 		{
-			User *u = uit->second;
-			if (u->server && u->server->IsULined())
+			const User *u = uit->second;
+			if (!u || (u && u->server && u->server->IsULined()))
 				continue;
 
 			bool matched = false;
 			for (unsigned i = notifies.size(); i > 0; --i)
 			{
-				NotifyEntry *ne = notifies.at(i - 1);
-
-				/* Just skip expired entries, deleting on startup is unliked */
-				if (ne->expires && ne->expires <= Anope::CurTime)
+				const NotifyEntry *ne = notifies.at(i - 1);
+				if (!ne)
 					continue;
-				else if (notifyService.Check(u, ne->mask))
+
+				if (notifyService.Check(u, ne->mask))
 				{
 					notifyService.AddMatch(u, ne);
 					matched = true;
@@ -928,12 +912,32 @@ class OSNotify : public Module
 		}
 
 		if (matches > 0)
-			Log(LOG_NORMAL, "notify/user", OperServ) << "NOTIFY: Matched " << matches << " user(s) against the Notify list";
+			NLog("user", "Matched %d user(s) against the Notify list", matches);
 	}
 
-	void OnModuleLoad(User *, Module *) anope_override
+ public:
+	OSNotify(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, THIRD),
+		notifyService(this), notifyentry_type("NotifyEntry", NotifyEntry::Unserialize),
+		commandosnotify(this), OperServ(NULL)
 	{
-		OnUplinkSync(NULL);
+		if (Anope::VersionMajor() != 2 || Anope::VersionMinor() != 0)
+			throw ModuleException("Requires version 2.0.x of Anope.");
+
+		this->SetAuthor("genius3000");
+		this->SetVersion("0.8.0");
+
+		if (Me && Me->IsSynced())
+			this->Init();
+	}
+
+	void OnReload(Configuration::Conf *conf) anope_override
+	{
+		OperServ = conf->GetClient("OperServ");
+	}
+
+	void OnUplinkSync(Server *) anope_override
+	{
+		this->Init();
 	}
 
 	void OnUserQuit(User *u, const Anope::string &msg) anope_override
@@ -941,7 +945,7 @@ class OSNotify : public Module
 		if (notifyService.IsMatch(u))
 		{
 			if (notifyService.HasFlag(u, 'd'))
-				Log(LOG_NORMAL, "notify/user", OperServ) << "NOTIFY: " << BuildNUHR(u) << " disconnected (reason: " << msg << ")";
+				NLog("user", "%s disconnected (reason: %s)", BuildNUHR(u).c_str(), msg.c_str());
 
 			notifyService.DelMatch(u);
 		}
@@ -949,19 +953,18 @@ class OSNotify : public Module
 
 	unsigned CheckUser(User *u)
 	{
-		if (notifyService.GetNotifiesCount() == 0 || (u->server && u->server->IsULined()))
+		const std::vector<NotifyEntry *> &notifies = notifyService.GetNotifies();
+		if (!u || notifies.empty() || (u->server && u->server->IsULined()))
 			return 0;
-
-		std::vector<NotifyEntry *> notifies = notifyService.GetNotifies();
 
 		unsigned matches = 0;
 		for (unsigned i = notifies.size(); i > 0; --i)
 		{
-			NotifyEntry *ne = notifies.at(i - 1);
+			const NotifyEntry *ne = notifies.at(i - 1);
+			if (!ne)
+				continue;
 
-			if (ne->expires && ne->expires <= Anope::CurTime)
-				notifyService.Expire(ne);
-			else if (notifyService.Check(u, ne->mask))
+			if (notifyService.Check(u, ne->mask))
 			{
 				if (notifyService.ExistsAlready(u, ne))
 					continue;
@@ -983,13 +986,13 @@ class OSNotify : public Module
 		if (matches > 0)
 		{
 			if (notifyService.HasFlag(u, 'c'))
-				Log(LOG_NORMAL, "notify/user", OperServ) << "NOTIFY: " << BuildNUHR(u) << " connected [matches " << matches << " Notify mask(s)]";
+				NLog("user", "%s connected [matches %d Notify mask(s)]", BuildNUHR(u).c_str(), matches);
 		}
 	}
 
 	void OnUserNickChange(User *u, const Anope::string &oldnick) anope_override
 	{
-		const Anope::string nuhr = oldnick + "!" + u->GetIdent() + "@" + u->host + " (" + u->realname + ")";
+		const Anope::string nuhr = oldnick + "!" + u->GetIdent() + "@" + u->host + "#" + u->realname;
 		bool oldmatch = false;
 
 		if (notifyService.IsMatch(u))
@@ -1003,24 +1006,24 @@ class OSNotify : public Module
 		if (matches > 0)
 		{
 			if (oldmatch)
-				Log(LOG_NORMAL, "notify/user", OperServ) << "NOTIFY: " << nuhr << " changed nick to " << u->nick << " [matches an additional " << matches << " Notify mask(s)]";
+				NLog("user", "%s changed nick to %s [matches an additional %d Notify mask(s)]", nuhr.c_str(), u->nick.c_str(), matches);
 			else
-				Log(LOG_NORMAL, "notify/user", OperServ) << "NOTIFY: " << nuhr << " changed nick to " << u->nick << " [matches " << matches << " Notify mask(s)]";
+				NLog("user", "%s changed nick to %s [matches %d Notify mask(s)]", nuhr.c_str(), u->nick.c_str(), matches);
 		}
 		else if (oldmatch)
-			Log(LOG_NORMAL, "notify/user", OperServ) << "NOTIFY: " << nuhr << " changed nick to " << u->nick;
+			NLog("user", "%s changed nick to %s", nuhr.c_str(), u->nick.c_str());
 	}
 
 	void OnJoinChannel(User *u, Channel *c) anope_override
 	{
 		if (notifyService.HasFlag(u, 'j'))
-			Log(LOG_NORMAL, "notify/channel", OperServ) << "NOTIFY: " << BuildNUHR(u) << " joined " << c->name;
+			NLog("channel", "%s joined %s", BuildNUHR(u).c_str(), c->name.c_str());
 	}
 
 	void OnPartChannel(User *u, Channel *c, const Anope::string &channel, const Anope::string &msg) anope_override
 	{
 		if (notifyService.HasFlag(u, 'p'))
-			Log(LOG_NORMAL, "notify/channel", OperServ) << "NOTIFY: " << BuildNUHR(u) << " parted " << c->name << " (reason: " << msg << ")";
+			NLog("channel", "%s parted %s (reason: %s)", BuildNUHR(u).c_str(), c->name.c_str(), msg.c_str());
 	}
 
 	void OnUserKicked(const MessageSource &source, User *target, const Anope::string &channel, ChannelStatus &status, const Anope::string &kickmsg) anope_override
@@ -1028,10 +1031,10 @@ class OSNotify : public Module
 		User *u = source.GetUser();
 
 		if (notifyService.HasFlag(target, 'k'))
-			Log(LOG_NORMAL, "notify/channel", OperServ) << "NOTIFY: " << BuildNUHR(target) << " was kicked from " << channel << " by " << (u ? u->nick : "unknown") << " (reason: " << kickmsg << ")";
+			NLog("channel", "%s was kicked from %s by %s (reason: %s)", BuildNUHR(target).c_str(), channel.c_str(), (u ? u->nick.c_str() : "unknown"), kickmsg.c_str());
 
 		if (u && notifyService.HasFlag(u, 'k'))
-			Log(LOG_NORMAL, "notify/channel", OperServ) << "NOTIFY: " << BuildNUHR(u) << " kicked " << BuildNUHR(target) << " from "<< channel << " (reason: " << kickmsg << ")";
+			NLog("channel", "%s kicked %s from %s (reason: %s)", BuildNUHR(u).c_str(), BuildNUHR(target).c_str(), channel.c_str(), kickmsg.c_str());
 	}
 
 	void OnUserMode(const MessageSource &setter, User *u, const Anope::string &mname, bool setting)
@@ -1040,9 +1043,9 @@ class OSNotify : public Module
 		UserMode *um = ModeManager::FindUserModeByName(mname);
 
 		if (setter.GetUser() && setter.GetUser() != u)
-			Log(LOG_NORMAL, "notify/user", OperServ) << "NOTIFY: " << setter.GetUser()->nick << (setting ? " set" : " unset") << " mode " << (um ? um->mchar : '\0') << " (" << mname << ")"  << " on " << nuhr;
+			NLog("user", "%s %sset mode %c (%s) on %s", setter.GetUser()->nick.c_str(), (setting ? "" : "un"), (um ? um->mchar : '\0'), mname.c_str(), nuhr.c_str());
 		else
-			Log(LOG_NORMAL, "notify/user", OperServ) << "NOTIFY: " << nuhr << (setting ? " set" : " unset") << " mode " << (um ? um->mchar : '\0') << " (" << mname << ")";
+			NLog("user", "%s %sset mode %c (%s)", nuhr.c_str(), (setting ? "" : "un"), (um ? um->mchar : '\0'), mname.c_str());
 	}
 
 	void OnUserModeSet(const MessageSource &setter, User *u, const Anope::string &mname) anope_override
@@ -1059,7 +1062,7 @@ class OSNotify : public Module
 
 	void OnChannelMode(Channel *c, MessageSource &setter, ChannelMode *mode, const Anope::string &param, bool setting)
 	{
-		User *u = setter.GetUser();
+		const User *u = setter.GetUser();
 		if (!u)
 			return;
 
@@ -1067,17 +1070,17 @@ class OSNotify : public Module
 		{
 			if (mode->type == MODE_STATUS)
 			{
-				User *target = User::Find(param, false);
-				Log(LOG_NORMAL, "notify/channel", OperServ) << "NOTIFY: " << BuildNUHR(u) << (setting ? " set" : " unset") << " channel mode " << mode->mchar << " (" << mode->name << ") on " << (target ? target->nick : "unknown") << " on " << c->name;
+				const User *target = User::Find(param, false);
+				NLog("channel", "%s %sset channel mode %c (%s) on %s on %s", BuildNUHR(u).c_str(), (setting ? "" : "un"), mode->mchar, mode->name.c_str(), (target ? target->nick.c_str() : "unknown"), c->name.c_str());
 			}
 			else
-				Log(LOG_NORMAL, "notify/channel", OperServ) << "NOTIFY: " << BuildNUHR(u) << (setting ? " set" : " unset") << " channel mode " << mode->mchar << " (" << mode->name << ")" << (param.empty() ? "" : " ["+param+"]") << " on " << c->name;
+				NLog("channel", "%s %sset channel mode %c (%s) [%s] on %s", BuildNUHR(u).c_str(), (setting ? "" : "un"), mode->mchar, mode->name.c_str(), (param.empty() ? "" : param.c_str()), c->name.c_str());
 		}
 		else if (mode->type == MODE_STATUS)
 		{
-			User *target = User::Find(param, false);
+			const User *target = User::Find(param, false);
 			if (target && notifyService.HasFlag(target, 'm'))
-				Log(LOG_NORMAL, "notify/channel", OperServ) << "NOTIFY: " << u->nick << (setting ? " set" : " unset") << " channel mode " << mode->mchar << " (" << mode->name << ") on " << BuildNUHR(target) << " on " << c->name;
+				NLog("channel", "%s %sset channel mode %c (%s) on %s on %s", u->nick.c_str(), (setting ? "" : "un"), mode->mchar, mode->name.c_str(), BuildNUHR(target).c_str(), c->name.c_str());
 		}
 	}
 
@@ -1097,23 +1100,27 @@ class OSNotify : public Module
 
 	void OnTopicUpdated(User *source, Channel *c, const Anope::string &user, const Anope::string &topic) anope_override
 	{
-		User *u = source ? source : User::Find(user, false);
+		/* Ignore Services setting topic upon channel creation */
+		if (c->topic_ts != Anope::CurTime && c->topic_ts != c->topic_time)
+			return;
+
+		const User *u = source ? source : User::Find(user, false);
 
 		if (u && notifyService.HasFlag(u, 't'))
-			Log(LOG_NORMAL, "notify/channel", OperServ) << "NOTIFY: " << BuildNUHR(u) << " changed topic on " << c->name << " to: " << topic;
+			NLog("channel", "%s changed topic on %s to %s", BuildNUHR(u).c_str(), c->name.c_str(), topic.c_str());
 	}
 
 	void OnPostCommand(CommandSource &source, Command *command, const std::vector<Anope::string> &params) anope_override
 	{
-		User *u = source.GetUser();
-		if (!u || (u && !notifyService.HasFlag(u, 's')))
+		const User *u = source.GetUser();
+		if (!u)
 			return;
 
 		const Anope::string &cmd = command->name;
-		if (!notifyService.HasFlag(u, 'S') && (Anope::Match(cmd, "*/set/*")))
+		if ((!notifyService.HasFlag(u, 's') && !Anope::Match(cmd, "*/set/*")) ||
+		    (!notifyService.HasFlag(u, 'S') && Anope::Match(cmd, "*/set/*")))
 			return;
 
-		const Anope::string &nuhr = BuildNUHR(u);
 		Anope::string strparams;
 		if (!params.empty() && cmd != "nickserv/register" && cmd != "nickserv/identify" && cmd != "nickserv/confirm" &&
 		    cmd != "nickserv/group" && cmd != "nickserv/recover" && cmd != "nickserv/set/password" &&
@@ -1124,9 +1131,9 @@ class OSNotify : public Module
 			strparams.rtrim(" ");
 		}
 
-		Anope::string scmd = source.service->nick + " " + cmd.substr(cmd.find('/') + 1).replace_all_ci("/", " ").upper();
+		const Anope::string scmd = source.service->nick + " " + cmd.substr(cmd.find('/') + 1).replace_all_ci("/", " ").upper();
 
-		Log(LOG_NORMAL, "notify/commands", OperServ) << "NOTIFY: " << nuhr << " used " << scmd << (!strparams.empty() ? " ["+strparams+"]" : "");
+		NLog("commands", "%s used %s [%s]", BuildNUHR(u).c_str(), scmd.c_str(), (strparams.empty() ? "" : strparams.c_str()));
 	}
 };
 
