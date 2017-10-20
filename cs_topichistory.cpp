@@ -111,6 +111,9 @@ Serializable* TopicHistoryEntry::Unserialize(Serializable *obj, Serialize::Data 
 	return entry;
 }
 
+/* This is set during load and config reload */
+unsigned maxhistory = 0;
+
 class CommandCSTopicHistory : public Command
 {
  private:
@@ -324,13 +327,6 @@ class CommandCSSetTopicHistory : public Command
 		source.Reply(" ");
 		source.Reply("The \002OFF\002 command clears the list and disables the option.");
 		source.Reply(" ");
-
-		/* Get (and verify) the maxhistory config value to display */
-		unsigned maxhistory = Config->GetModule(this->module)->Get<unsigned>("maxhistory", "3");
-		if (maxhistory < 1)
-			maxhistory = 1;
-		else if (maxhistory > 20)
-			maxhistory = 20;
 		source.Reply("There is a maximum Topic History list size of %d topics.", maxhistory);
 		source.Reply(" ");
 
@@ -348,19 +344,18 @@ class CommandCSSetTopicHistory : public Command
 
 class CSTopicHistory : public Module
 {
+	Serialize::Type topichistory_type;
+	SerializableExtensibleItem<bool> topichistory;
+	ExtensibleItem<TopicHistoryList> topichistorylist;
 	CommandCSTopicHistory commandcstopichistory;
 	CommandCSSetTopicHistory commandcssettopichistory;
-	SerializableExtensibleItem<bool> topichistory;
-	ExtensibleItem<TopicHistoryList> thl;
-	Serialize::Type topichistory_type;
-	unsigned maxhistory;
 
  public:
 
 	CSTopicHistory(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, THIRD),
-		commandcstopichistory(this), commandcssettopichistory(this),
-		topichistory(this, "TOPICHISTORY"), thl(this, "topichistorylist"),
-		topichistory_type("TopicHistory", TopicHistoryEntry::Unserialize)
+		topichistory_type("TopicHistory", TopicHistoryEntry::Unserialize),
+		topichistory(this, "TOPICHISTORY"), topichistorylist(this, "topichistorylist"),
+		commandcstopichistory(this), commandcssettopichistory(this)
 	{
 		if (Anope::VersionMajor() != 2 || Anope::VersionMinor() != 0)
 			throw ModuleException("Requires version 2.0.x of Anope.");
@@ -375,12 +370,12 @@ class CSTopicHistory : public Module
 		 * NOTE: We actually allow 1 more than "maxhistory" and hide the first entry (index 0)
 		 *       This hides the current topic and shows "maxhistory" historical topics
 		 */
-		this->maxhistory = conf->GetModule(this)->Get<unsigned>("maxhistory", "3");
+		maxhistory = conf->GetModule(this)->Get<unsigned>("maxhistory", "3");
 
-		if (this->maxhistory < 1)
-			this->maxhistory = 1;
-		else if (this->maxhistory > 20)
-			this->maxhistory = 20;
+		if (maxhistory < 1)
+			maxhistory = 1;
+		else if (maxhistory > 20)
+			maxhistory = 20;
 	}
 
 	void OnTopicUpdated(User *source, Channel *c, const Anope::string &user, const Anope::string &topic) anope_override
@@ -409,7 +404,7 @@ class CSTopicHistory : public Module
 		}
 
 		/* Remove the oldest topic when the list is full for the channel */
-		if ((*entries)->size() >= (this->maxhistory + 1))
+		if ((*entries)->size() >= (maxhistory + 1))
 			delete (*entries)->at((*entries)->size() - 1);
 
 		/* The below code is doing:
