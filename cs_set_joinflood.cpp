@@ -230,26 +230,13 @@ class CSSetJoinFlood : public Module
 		}
 	} joinflood;
 
-	CommandCSSetJoinFlood commandcssetjoinflood;
 	ExtensibleItem<JoinCounter> joincounter;
+	CommandCSSetJoinFlood commandcssetjoinflood;
 
 	char symbol;
 	ChannelMode *regonlymode = NULL;
 
- public:
-	CSSetJoinFlood(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, THIRD),
-		joinflood(this, "JOINFLOOD"),
-		commandcssetjoinflood(this),
-		joincounter(this, "joincounter")
-	{
-		if (Anope::VersionMajor() != 2 || Anope::VersionMinor() != 0)
-			throw ModuleException("Requires version 2.0.x of Anope.");
-
-		this->SetAuthor("genius3000");
-		this->SetVersion("1.0.1");
-	}
-
-	void OnUplinkSync(Server*) anope_override
+	void Init()
 	{
 		regonlymode = ModeManager::FindChannelModeByName("REGISTEREDONLY");
 
@@ -261,9 +248,23 @@ class CSSetJoinFlood : public Module
 			symbol = op ? anope_dynamic_static_cast<ChannelModeStatus *>(op)->symbol : 0;
 	}
 
-	void OnModuleLoad(User*, Module*) anope_override
+ public:
+	CSSetJoinFlood(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, THIRD),
+		joinflood(this, "JOINFLOOD"), joincounter(this, "joincounter"), commandcssetjoinflood(this)
 	{
-		OnUplinkSync(NULL);
+		if (Anope::VersionMajor() != 2 || Anope::VersionMinor() != 0)
+			throw ModuleException("Requires version 2.0.x of Anope.");
+
+		this->SetAuthor("genius3000");
+		this->SetVersion("1.0.2");
+
+		if (Me && Me->IsSynced())
+			this->Init();
+	}
+
+	void OnUplinkSync(Server*) anope_override
+	{
+		this->Init();
 	}
 
 	void OnJoinChannel(User *u, Channel *c) anope_override
