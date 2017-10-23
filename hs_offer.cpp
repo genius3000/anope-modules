@@ -12,7 +12,7 @@
  * Syntax (user): OFFERLIST [TAKE] [vhost | entry-num | list]
  *
  * Configuration to put into your hostserv config:
-module { name = "hs_offer" }
+module { name = "hs_offer"; takedelay = 600; }
 command { service = "HostServ"; name = "OFFER"; command = "hostserv/offer"; permission = "hostserv/offer"; }
 command { service = "HostServ"; name = "OFFERLIST"; command = "hostserv/offerlist"; }
  *
@@ -26,6 +26,7 @@ command { service = "HostServ"; name = "OFFERLIST"; command = "hostserv/offerlis
 #include "module.h"
 
 
+/* Individual host offer data */
 struct HostOffer : Serializable
 {
  public:
@@ -56,18 +57,19 @@ struct HostOffer : Serializable
 	static Serializable* Unserialize(Serializable *obj, Serialize::Data &data);
 };
 
-class OfferService : public Service
+/* List of host offers */
+class HostOffersList
 {
  protected:
 	Serialize::Checker<std::vector<HostOffer *> > offers;
 
  public:
-	OfferService(Module *m) : Service(m, "OfferService", "offer"), offers("HostOffer") { }
+	HostOffersList() : offers("HostOffer") { }
 
-	~OfferService()
+	~HostOffersList()
 	{
 		for (unsigned i = offers->size(); i > 0; --i)
-			delete (*offers).at(i - 1);
+			delete offers->at(i - 1);
 	}
 
 	void Add(HostOffer *ho)
@@ -85,13 +87,34 @@ class OfferService : public Service
 	void Clear()
 	{
 		for (unsigned i = offers->size(); i > 0; --i)
-			delete (*offers).at(i - 1);
+			delete offers->at(i - 1);
 	}
 
 	void Expire(HostOffer *ho)
 	{
 		Log(Config->GetClient("HostServ"), "expire/offer") << "Expiring vHost Offer " << (!ho->ident.empty() ? ho->ident + "@" : "") << ho->host;
 		delete ho;
+	}
+
+	unsigned GetCount()
+	{
+		return offers->size();
+	}
+
+	HostOffer *FindExact(const Anope::string &match)
+	{
+		for (unsigned i = offers->size(); i > 0; --i)
+		{
+			HostOffer *ho = offers->at(i - 1);
+			const Anope::string vhost = (!ho->ident.empty() ? ho->ident + "@" : "") + ho->host;
+
+			if (ho->expires && ho->expires <= Anope::CurTime)
+				Expire(ho);
+			else if (vhost.equals_ci(match))
+				return ho;
+		}
+
+		return NULL;
 	}
 
 	HostOffer *Get(unsigned i)
@@ -109,23 +132,7 @@ class OfferService : public Service
 		return ho;
 	}
 
-	HostOffer *FindExact(const Anope::string &match)
-	{
-		for (unsigned i = offers->size(); i > 0; --i)
-		{
-			HostOffer *ho = offers->at(i - 1);
-			Anope::string vhost = (!ho->ident.empty() ? ho->ident + "@" : "") + ho->host;
-
-			if (ho->expires && ho->expires <= Anope::CurTime)
-				Expire(ho);
-			else if (vhost.equals_ci(match))
-				return ho;
-		}
-
-		return NULL;
-	}
-
-	std::vector<HostOffer *> GetAll()
+	const std::vector<HostOffer *> GetAll()
 	{
 		std::vector<HostOffer *> list;
 
@@ -141,26 +148,16 @@ class OfferService : public Service
 
 		return list;
 	}
-
-	unsigned GetCount()
-	{
-		return offers->size();
-	}
-};
-
-static ServiceReference<OfferService> offer_service("OfferService", "offer");
+}
+HostOffersList;
 
 HostOffer::~HostOffer()
 {
-	if (offer_service)
-		offer_service->Del(this);
+	HostOffersList.Del(this);
 }
 
 Serializable* HostOffer::Unserialize(Serializable *obj, Serialize::Data &data)
 {
-	if (!offer_service)
-		return NULL;
-
 	HostOffer *ho;
 	if (obj)
 		ho = anope_dynamic_static_cast<HostOffer *>(obj);
@@ -175,11 +172,12 @@ Serializable* HostOffer::Unserialize(Serializable *obj, Serialize::Data &data)
 	data["expires"] >> ho->expires;
 
 	if (!obj)
-		offer_service->Add(ho);
+		HostOffersList.Add(ho);
 
 	return ho;
 }
 
+/* Handle number and list deletions */
 class OfferDelCallback : public NumberList
 {
 	CommandSource &source;
@@ -193,7 +191,7 @@ class OfferDelCallback : public NumberList
 	{
 		if (!deleted)
 		{
-			source.Reply("No matching entries on the Offer list.");
+			source.Reply("No matching entries on the host offer list.");
 			return;
 		}
 
@@ -201,9 +199,9 @@ class OfferDelCallback : public NumberList
 			source.Reply(READ_ONLY_MODE);
 
 		if (deleted == 1)
-			source.Reply("Deleted 1 entry from the Offer list.");
+			source.Reply("Deleted 1 entry from the host offer list.");
 		else
-			source.Reply("Deleted %d entries from the Offer list.");
+			source.Reply("Deleted %d entries from the host offer list.", deleted);
 	}
 
 	void HandleNumber(unsigned number) anope_override
@@ -211,7 +209,7 @@ class OfferDelCallback : public NumberList
 		if (!number)
 			return;
 
-		HostOffer *ho = offer_service->Get(number - 1);
+		HostOffer *ho = HostOffersList.Get(number - 1);
 		if (!ho)
 			return;
 
@@ -221,7 +219,7 @@ class OfferDelCallback : public NumberList
 	}
 };
 
-/* Common functions */
+/* Ident and Host functions */
 bool isvalidchar(char c)
 {
 	if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '-')
@@ -262,9 +260,10 @@ const Anope::string ReplaceArgs(const Anope::string &ih, const Anope::string &ni
 	Anope::string str = ih;
 	NickAlias *na = NickAlias::Find(nick);
 
-	str = str.replace_all_ci("$account", (na ? na->nc->display : " "));
-	str = str.replace_all_ci("$regepoch", (na ? stringify(na->time_registered) : ""));
+	str = str.replace_all_ci("$account", (na ? na->nc->display : ""));
+	str = str.replace_all_ci("$nick", (na ? na->nick : ""));
 	str = str.replace_all_ci("$netname", Config->GetBlock("networkinfo")->Get<Anope::string>("networkname"));
+	str = str.replace_all_ci("$regepoch", (na ? stringify(na->time_registered) : ""));
 
 	if (Anope::Match(ih, "*$regdate*"))
 	{
@@ -286,8 +285,6 @@ const Anope::string ReplaceArgs(const Anope::string &ih, const Anope::string &ni
 class CommandHSOffer : public Command
 {
  private:
-	ServiceReference<OfferService> os;
-
 	void DoAdd(CommandSource &source, const std::vector<Anope::string> &params)
 	{
 		if (params.size() < 4)
@@ -337,9 +334,7 @@ class CommandHSOffer : public Command
 				return;
 			}
 
-			Anope::string sub_ident;
-
-			/* Only allow one argument in the ident as $account is likely the only one to not be too long */
+			/* Only allow one argument in the ident as it has a short length limit */
 			size_t sigil = ident.find('$');
 			if (sigil != Anope::string::npos && ident.substr(sigil + 1).find('$') != Anope::string::npos)
 			{
@@ -347,8 +342,9 @@ class CommandHSOffer : public Command
 				return;
 			}
 
+			Anope::string sub_ident;
 			if (sigil != Anope::string::npos)
-				sub_ident = ReplaceArgs(ident, (source.GetAccount() ? source.GetAccount()->display : source.GetNick()));
+				sub_ident = ReplaceArgs(ident, source.GetNick());
 			else
 				sub_ident = ident;
 
@@ -357,8 +353,8 @@ class CommandHSOffer : public Command
 			{
 				if (ret == 1)
 				{
-					/* Let's give $account a chance, it might be good for some users */
-					if (!Anope::Match(ident, "*$account*"))
+					/* Let's give $account and $nick a chance, it might be good for other users */
+					if (!Anope::Match(ident, "*$account*") && !Anope::Match(ident, "*$nick*"))
 					{
 						source.Reply(HOST_SET_IDENTTOOLONG, Config->GetBlock("networkinfo")->Get<unsigned>("userlen"));
 						return;
@@ -374,7 +370,7 @@ class CommandHSOffer : public Command
 
 		Anope::string sub_host;
 		if (host.find('$') != Anope::string::npos)
-			sub_host = ReplaceArgs(host, (source.GetAccount() ? source.GetAccount()->display : source.GetNick()));
+			sub_host = ReplaceArgs(host, source.GetNick());
 		else
 			sub_host = host;
 
@@ -390,31 +386,32 @@ class CommandHSOffer : public Command
 		}
 
 		const Anope::string full_vHost = (!ident.empty() ? ident + "@" : "") + host;
-		if (os->FindExact(full_vHost))
+		if (HostOffersList.FindExact(full_vHost))
 		{
 			source.Reply("Host offer \002%s\002 already exists.", full_vHost.c_str());
 			return;
 		}
 
 		HostOffer *ho = new HostOffer(ident, host, source.GetNick(), reason, Anope::CurTime, expires);
-		os->Add(ho);
+		HostOffersList.Add(ho);
 
-		Log(LOG_ADMIN, source, this) << "to add a Host offer of " << full_vHost << " (reason: " << reason << ")";
-		source.Reply("\002%s\002 added to the Host offer list.", full_vHost.c_str());
+		Log(LOG_ADMIN, source, this) << "to add a host offer of " << full_vHost << " (reason: " << reason << ")";
+		source.Reply("\002%s\002 added to the host offer list.", full_vHost.c_str());
 	}
 
 	void DoDel(CommandSource &source, const std::vector<Anope::string> &params)
 	{
 		const Anope::string &match = params.size() > 1 ? params[1] : "";
+
 		if (match.empty())
 		{
 			this->OnSyntaxError(source, "DEL");
 			return;
 		}
 
-		if (os->GetCount() == 0)
+		if (HostOffersList.GetCount() == 0)
 		{
-			source.Reply("Offer list is empty.");
+			source.Reply("Host offer list is empty.");
 			return;
 		}
 
@@ -425,10 +422,10 @@ class CommandHSOffer : public Command
 		}
 		else
 		{
-			const HostOffer *ho = os->FindExact(match);
+			const HostOffer *ho = HostOffersList.FindExact(match);
 			if (!ho)
 			{
-				source.Reply("\002%s\002 not found on the Offer list.", match.c_str());
+				source.Reply("\002%s\002 not found on the host offer list.", match.c_str());
 				return;
 			}
 
@@ -437,7 +434,7 @@ class CommandHSOffer : public Command
 
 			const Anope::string vHost = (!ho->ident.empty() ? ho->ident + "@" : "") + ho->host;
 			Log(LOG_ADMIN, source, this) << "to remove " << vHost << " from the list";
-			source.Reply("\002%s\002 deleted from the Offer list.", vHost.c_str());
+			source.Reply("\002%s\002 deleted from the host offer list.", vHost.c_str());
 
 			delete ho;
 		}
@@ -462,7 +459,7 @@ class CommandHSOffer : public Command
 					if (!number)
 						return;
 
-					const HostOffer *ho = offer_service->Get(number - 1);
+					const HostOffer *ho = HostOffersList.Get(number - 1);
 					if (!ho)
 						return;
 
@@ -475,20 +472,21 @@ class CommandHSOffer : public Command
 					entry["Expires"] = Anope::Expires(ho->expires, source.GetAccount());
 					list.AddEntry(entry);
 				}
-			} nl_list(source, list, match);
+			}
+			nl_list(source, list, match);
 			nl_list.Process();
 		}
 		else
 		{
-			const std::vector<HostOffer *> &offers = os->GetAll();
-			for (unsigned i = 0; i < offers.size(); ++i)
+			const std::vector<HostOffer *> &list_offers = HostOffersList.GetAll();
+			for (unsigned i = 0; i < list_offers.size(); ++i)
 			{
-				const HostOffer *ho = offer_service->Get(i);
+				const HostOffer *ho = list_offers.at(i);
 				if (!ho)
 					return;
 
 				const Anope::string vHost = (!ho->ident.empty() ? ho->ident + "@" : "") + ho->host;
-				if (match.empty() || match.equals_ci(vHost) || Anope::Match(vHost, match, false, true))
+				if (match.empty() || match.equals_ci(vHost) || Anope::Match(vHost, match))
 				{
 					ListFormatter::ListEntry entry;
 					entry["Number"] = stringify(i + 1);
@@ -503,10 +501,10 @@ class CommandHSOffer : public Command
 		}
 
 		if (list.IsEmpty())
-			source.Reply("No matching entries on the Offer list.");
+			source.Reply("No matching entries on the host offer list.");
 		else
 		{
-			source.Reply("Current Offer list:");
+			source.Reply("Current host offer list:");
 
 			std::vector<Anope::string> replies;
 			list.Process(replies);
@@ -514,15 +512,15 @@ class CommandHSOffer : public Command
 			for (unsigned i = 0; i < replies.size(); ++i)
 				source.Reply(replies[i]);
 
-			source.Reply("End of Offer list.");
+			source.Reply("End of host offer list.");
 		}
 	}
 
 	void DoList(CommandSource &source, const std::vector<Anope::string> &params)
 	{
-		if (os->GetCount() == 0)
+		if (HostOffersList.GetCount() == 0)
 		{
-			source.Reply("Offer list is empty.");
+			source.Reply("Host offer list is empty.");
 			return;
 		}
 
@@ -534,9 +532,9 @@ class CommandHSOffer : public Command
 
 	void DoView(CommandSource &source, const std::vector<Anope::string> &params)
 	{
-		if (os->GetCount() == 0)
+		if (HostOffersList.GetCount() == 0)
 		{
-			source.Reply("Offer list is empty.");
+			source.Reply("Host offer list is empty.");
 			return;
 		}
 
@@ -549,37 +547,34 @@ class CommandHSOffer : public Command
 
 	void DoClear(CommandSource &source)
 	{
-		if (os->GetCount() == 0)
+		if (HostOffersList.GetCount() == 0)
 		{
-			source.Reply("Offer list is empty.");
+			source.Reply("Host offer list is empty.");
 			return;
 		}
 
 		if (Anope::ReadOnly)
 			source.Reply(READ_ONLY_MODE);
 
-		os->Clear();
+		HostOffersList.Clear();
 
 		Log(LOG_ADMIN, source, this) << "to clear the list";
-		source.Reply("Offer list has been cleared.");
+		source.Reply("Host offer list has been cleared.");
 	}
 
  public:
-	CommandHSOffer(Module *creator) : Command(creator, "hostserv/offer", 1, 4), os("OfferService", "offer")
+	CommandHSOffer(Module *creator) : Command(creator, "hostserv/offer", 1, 4)
 	{
-		this->SetDesc("Manipulate the vHost Offer list");
+		this->SetDesc("Manipulate the host offer list");
 		this->SetSyntax("ADD +\037expiry\037 \037vHost\037 \037reason\037");
 		this->SetSyntax("DEL {\037vHost\037 | \037entry-num\037 | \037list\037}");
-		this->SetSyntax("LIST [\037vHost\037 | \037entry-num\037 | \037list\037");
-		this->SetSyntax("VIEW [\037vHost\037 | \037entry-num\037 | \037list\037");
+		this->SetSyntax("LIST [\037vHost mask\037 | \037entry-num\037 | \037list\037");
+		this->SetSyntax("VIEW [\037vHost mask\037 | \037entry-num\037 | \037list\037");
 		this->SetSyntax("CLEAR");
 	}
 
 	void Execute(CommandSource &source, const std::vector<Anope::string> &params) anope_override
 	{
-		if (!os)
-			return;
-
 		const Anope::string &subcmd = params[0];
 
 		if (subcmd.equals_ci("ADD"))
@@ -614,8 +609,8 @@ class CommandHSOffer : public Command
 		if (IRCD->CanSetVIdent)
 		{
 			source.Reply("vHost can be \037vIdent@vHost\037 or just \037vHost\037\n"
-				     "and both can contain arguments for substitution. Note that\n"
-				     "the vIdent can only be %d characters long.",
+				     "and both can contain arguments for substitution. Note that the\n"
+				     "vIdent can only contain one argument and be %d characters long.",
 				     Config->GetBlock("networkinfo")->Get<unsigned>("userlen"));
 		}
 		else
@@ -623,8 +618,9 @@ class CommandHSOffer : public Command
 
 		source.Reply("Available arguments are:\n"
 			     "$account - Display nick of the user's account\n"
-			     "$regepoch - Time registered in epoch time\n"
-			     "$regdate - Date registered in YYYY-MM-DD\n"
+			     "$nick - Nick alias\n"
+			     "$regepoch - Time <nick> was registered in epoch time\n"
+			     "$regdate - Date <nick> was registered in YYYY-MM-DD\n"
 			     "$netname - Network Name\n"
 			     "The \037reason\037 is visible to users.");
 		source.Reply(" ");
@@ -632,7 +628,7 @@ class CommandHSOffer : public Command
 			     "an entry number, or a list of entry numbers (1-5 or 1-3,5 format).\n"
 			     "The \002LIST\002 and \002VIEW\002 commands can be used with no\n"
 			     "parameters or with one of the above parameters, for DEL.\n");
-		source.Reply("The \002CLEAR\002 command clears all of the Offers from the list.");
+		source.Reply("The \002CLEAR\002 command clears all of the host offers from the list.");
 
 		return true;
 	}
@@ -649,11 +645,11 @@ class CommandHSOffer : public Command
 class CommandHSOfferList : public Command
 {
  private:
-	ServiceReference<OfferService> os;
-
 	void DoTake(CommandSource &source, const std::vector<Anope::string> &params)
 	{
 		NickAlias *na = NickAlias::Find(source.GetNick());
+		HostOffer *ho;
+
 		if (!na || na->nc != source.GetAccount())
 		{
 			source.Reply(ACCESS_DENIED);
@@ -667,7 +663,7 @@ class CommandHSOfferList : public Command
 		}
 
 		time_t take_delay = Config->GetModule(this->module)->Get<time_t>("takedelay");
-		if (take_delay > 0 && na->GetVhostCreated() + take_delay > Anope::CurTime)
+		if (take_delay > 0 && na->HasVhost() && na->GetVhostCreated() + take_delay > Anope::CurTime)
 		{
 			source.Reply("Please wait %d seconds before taking a new vHost.", take_delay);
 			return;
@@ -680,18 +676,16 @@ class CommandHSOfferList : public Command
 			return;
 		}
 
-		if (os->GetCount() == 0)
+		if (HostOffersList.GetCount() == 0)
 		{
-			source.Reply("Offer list is empty.");
+			source.Reply("Host offer list is empty.");
 			return;
 		}
-
-		HostOffer *ho;
 
 		if (match.find_first_not_of("1234567890") == Anope::string::npos)
 		{
 			unsigned number = convertTo<unsigned>(match);
-			ho = os->Get(number - 1);
+			ho = HostOffersList.Get(number - 1);
 			if (!ho)
 			{
 				source.Reply("%d is an invalid entry number", number);
@@ -700,13 +694,14 @@ class CommandHSOfferList : public Command
 		}
 		else
 		{
-			ho = os->FindExact(match);
+			ho = HostOffersList.FindExact(match);
 			if (!ho)
 			{
-				source.Reply("\002%s\002 not found on the Offer list.", match.c_str());
+				source.Reply("\002%s\002 not found on the host offer list.", match.c_str());
 				return;
 			}
 		}
+
 		if (Anope::ReadOnly)
 			source.Reply(READ_ONLY_MODE);
 
@@ -734,11 +729,7 @@ class CommandHSOfferList : public Command
 			return;
 		}
 
-		const Anope::string full_vHost = (!ident.empty() ? ident + "@" : "") + host;
-
-		Log(LOG_COMMAND, source, this) << "to take offer " << (!ho->ident.empty() ? ho->ident + "@" : "") << ho->host << " and set their vHost to " << full_vHost;
-		source.Reply("Your vHost has been set to %s.", full_vHost.c_str());
-
+		Log(LOG_COMMAND, source, this) << "to take offer " << (!ho->ident.empty() ? ho->ident + "@" : "") << ho->host << " and set their vHost to " << (!ident.empty() ? ident + "@" : "") + host;
 		na->SetVhost(ident, host, ho->creator);
 		FOREACH_MOD(OnSetVhost, (na));
 	}
@@ -746,6 +737,7 @@ class CommandHSOfferList : public Command
 	void DoList(CommandSource &source, const std::vector<Anope::string> &params)
 	{
 		NickAlias *na = NickAlias::Find(source.GetNick());
+
 		if (!na || na->nc != source.GetAccount())
 		{
 			source.Reply(ACCESS_DENIED);
@@ -754,13 +746,13 @@ class CommandHSOfferList : public Command
 
 		if (source.GetAccount()->HasExt("UNCONFIRMED"))
 		{
-			source.Reply("You must confirm your account before you can view the offer list.");
+			source.Reply("You must confirm your account before you can view the host offer list.");
 			return;
 		}
 
-		if (os->GetCount() == 0)
+		if (HostOffersList.GetCount() == 0)
 		{
-			source.Reply("Offer list is empty.");
+			source.Reply("Host offer list is empty.");
 			return;
 		}
 
@@ -783,7 +775,7 @@ class CommandHSOfferList : public Command
 					if (!number)
 						return;
 
-					const HostOffer *ho = offer_service->Get(number - 1);
+					const HostOffer *ho = HostOffersList.Get(number - 1);
 					if (!ho)
 						return;
 
@@ -796,20 +788,21 @@ class CommandHSOfferList : public Command
 					ListFormatter::ListEntry entry;
 					entry["Number"] = stringify(number);
 					entry["Offer vHost"] = (!ho->ident.empty() ? ho->ident + "@" : "") + ho->host;
-					entry["Your vHost"] = (!ident.empty() ? ident + "@" : "") + host + (invalid ? " (Invalid)" : "");
+					entry["Your vHost"] = (!ident.empty() ? ident + "@" : "") + host + (invalid ? " [Invalid]" : "");
 					entry["Expires"] = Anope::Expires(ho->expires, source.GetAccount());
 					entry["Reason"] = ho->reason;
 					list.AddEntry(entry);
 				}
-			} nl_list(source, list, match);
+			}
+			nl_list(source, list, match);
 			nl_list.Process();
 		}
 		else
 		{
-			const std::vector<HostOffer *> &offers = os->GetAll();
-			for (unsigned i = 0; i < offers.size(); ++i)
+			const std::vector<HostOffer *> &list_offers = HostOffersList.GetAll();
+			for (unsigned i = 0; i < list_offers.size(); ++i)
 			{
-				const HostOffer *ho = offers.at(i);
+				const HostOffer *ho = list_offers.at(i);
 				if (!ho)
 					continue;
 
@@ -825,7 +818,7 @@ class CommandHSOfferList : public Command
 					ListFormatter::ListEntry entry;
 					entry["Number"] = stringify(i + 1);
 					entry["Offer vHost"] = vHost;
-					entry["Your vHost"] = (!ident.empty() ? ident + "@" : "") + host + (invalid ? " (Invalid)" : "");
+					entry["Your vHost"] = (!ident.empty() ? ident + "@" : "") + host + (invalid ? " [Invalid]" : "");
 					entry["Expires"] = Anope::Expires(ho->expires, source.GetAccount());
 					entry["Reason"] = ho->reason;
 					list.AddEntry(entry);
@@ -834,10 +827,10 @@ class CommandHSOfferList : public Command
 		}
 
 		if (list.IsEmpty())
-			source.Reply("No matching entries on the offer list.");
+			source.Reply("No matching entries on the host offer list.");
 		else
 		{
-			source.Reply("Current offer list:");
+			source.Reply("Current host offer list:");
 
 			std::vector<Anope::string> replies;
 			list.Process(replies);
@@ -845,14 +838,14 @@ class CommandHSOfferList : public Command
 			for (unsigned i = 0; i < replies.size(); ++i)
 				source.Reply(replies[i]);
 
-			source.Reply("End of offer list.");
+			source.Reply("End of host offer list.");
 		}
 	}
 
  public:
-	CommandHSOfferList(Module *creator) : Command(creator, "hostserv/offerlist", 0, 2), os("OfferService", "offer")
+	CommandHSOfferList(Module *creator) : Command(creator, "hostserv/offerlist", 0, 2)
 	{
-		this->SetDesc("List or take a vHost from the Offer list");
+		this->SetDesc("List or take a vHost from the host offer list");
 		this->SetSyntax(" [\037vHost mask\037 | \037entry-num\037 | \037list\037]");
 		this->SetSyntax("TAKE {\037vHost\037 | \037entry-num\037}");
 		this->RequireUser(true);
@@ -860,9 +853,6 @@ class CommandHSOfferList : public Command
 
 	void Execute(CommandSource &source, const std::vector<Anope::string> &params) anope_override
 	{
-		if (!os)
-			return;
-
 		if (!params.empty() && params[0].equals_ci("TAKE"))
 			this->DoTake(source, params);
 		else
@@ -892,21 +882,20 @@ class CommandHSOfferList : public Command
 
 class HSOffer : public Module
 {
-	OfferService offerService;
 	Serialize::Type hostoffer_type;
 	CommandHSOffer commandhsoffer;
 	CommandHSOfferList commandhsofferlist;
 
  public:
 	HSOffer(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, THIRD),
-		offerService(this), hostoffer_type("HostOffer", HostOffer::Unserialize),
+		hostoffer_type("HostOffer", HostOffer::Unserialize),
 		commandhsoffer(this), commandhsofferlist(this)
 	{
 		if (Anope::VersionMajor() != 2 || Anope::VersionMinor() != 0)
 			throw ModuleException("Requires version 2.0.x of Anope.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("0.5.0");
+		this->SetVersion("0.8.0");
 	}
 
 	void OnReload(Configuration::Conf *conf) anope_override
