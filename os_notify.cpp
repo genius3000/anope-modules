@@ -5,12 +5,18 @@
  * Please refer to the GPL License in use by Anope at:
  * https://github.com/anope/anope/blob/master/docs/COPYING
  *
- * Notifies opers via log (intended to log to channel) of events done by users matching
- * a set mask.
+ * Allows Opers to be notified of flagged events done by Users matching a mask.
  * Masks are the same as AKILL: nick!user@host#real (only needing user@host) and allowing
  * regex matching if enabled.
+ * Notification is done via the log method and is therefore configurable.
+ * Flags control which events are logged and are listed in the Command Help or as a
+ * code comment in the DoAdd function.
  *
- * Syntax: NOTIFY {ADD | DEL | LIST | VIEW | CLEAR | SHOW} [+expiry [all] mask [:]reason | mask | entry-num | list]
+ * Syntax: NOTIFY ADD +expiry flags|* mask [:]reason
+ *		  DEL mask | entry-num | list
+ *		  LIST | VIEW | SHOW [mask | entry-num | list]
+ *		  CLEAR
+ *		  REMOVE nick
  *
  * Configuration to put into your operserv config:
 module { name = "os_notify" }
@@ -23,6 +29,7 @@ log { target = "#services-notify"; bot = "OperServ"; other = "notify/..."; }
  * notify/user
  * notify/channel
  * notify/commands
+ * Expiring entries follow the log format of: expire/notify
  */
 
 /* TODO/Thoughts
@@ -43,7 +50,7 @@ struct NotifyEntry : Serializable
 	time_t created;		/* Time of creation */
 	time_t expires;		/* Time of expiry */
 
-	NotifyEntry() : Serializable("NotifyEntry") { }
+	NotifyEntry() : Serializable("Notify") { }
 
 	~NotifyEntry();
 
@@ -64,8 +71,8 @@ struct NotifyEntry : Serializable
 typedef std::multimap<const NotifyEntry *, const User *> PerEntryMap;
 typedef std::multimap<const User *, const NotifyEntry *> PerUserMap;
 
-/* Service to access and modify Notify Entries and currently Matched users */
-class NotifyService : public Service
+/* List of Notify Entries and currently Matched users */
+class NotifyList
 {
  protected:
 	Serialize::Checker<std::vector<NotifyEntry *> > notifies;
@@ -73,9 +80,9 @@ class NotifyService : public Service
 	PerUserMap match_user;		/* Multiple Notify Entires mapped to one User */
 
  public:
-	NotifyService(Module *m) : Service(m, "NotifyService", "notify"), notifies("NotifyEntry") { }
+	NotifyList() : notifies("Notify") { }
 
-	~NotifyService()
+	~NotifyList()
 	{
 		for (unsigned i = notifies->size(); i > 0; --i)
 			delete (*notifies).at(i - 1);
@@ -116,21 +123,19 @@ class NotifyService : public Service
 		match_user.clear();
 	}
 
-	/* Expire a Notify Entry */
-	void Expire(NotifyEntry *ne)
+	void Expire(const NotifyEntry *ne)
 	{
-		Log(Config->GetClient("OperServ"), "expire/notify") << "Expiring Notify entry " << ne->mask;
+		Log(Config->GetClient("OperServ"), "expire/notify") << "Expiring notify entry " << ne->mask;
 		delete ne;
 	}
 
-	/* Return a Notify Entry given an index number */
-	NotifyEntry *GetNotify(unsigned i)
+	const NotifyEntry *GetNotify(const unsigned number)
 	{
-		if (i >= notifies->size())
+		if (number >= notifies->size())
 			return NULL;
 
-		NotifyEntry *ne = notifies->at(i);
-		if (ne && ne->expires && ne->expires <= Anope::CurTime)
+		const NotifyEntry *ne = notifies->at(number);
+		if (ne->expires && ne->expires <= Anope::CurTime)
 		{
 			Expire(ne);
 			return NULL;
@@ -139,14 +144,11 @@ class NotifyService : public Service
 		return ne;
 	}
 
-	/* Return an exact matching Notify Entry given a mask */
-	NotifyEntry *FindExactNotify(const Anope::string &mask)
+	const NotifyEntry *GetNotify(const Anope::string &mask)
 	{
 		for (unsigned i = notifies->size(); i > 0; --i)
 		{
-			NotifyEntry *ne = notifies->at(i - 1);
-			if (!ne)
-				continue;
+			const NotifyEntry *ne = notifies->at(i - 1);
 
 			if (ne->expires && ne->expires <= Anope::CurTime)
 				Expire(ne);
@@ -173,23 +175,19 @@ class NotifyService : public Service
 		return notify_mask.Matches(const_cast<User *>(u), true);
 	}
 
-	std::vector<NotifyEntry *> GetNotifies()
+	const std::vector<NotifyEntry *> &GetNotifies()
 	{
-		std::vector<NotifyEntry *> list;
-
 		for (unsigned i = notifies->size(); i > 0; --i)
 		{
-			NotifyEntry *ne = notifies->at(i - 1);
-			if (ne && ne->expires && ne->expires <= Anope::CurTime)
+			const NotifyEntry *ne = notifies->at(i - 1);
+			if (ne->expires && ne->expires <= Anope::CurTime)
 				Expire(ne);
-			else if (ne)
-				list.insert(list.begin(), ne);
 		}
 
-		return list;
+		return *notifies;
 	}
 
-	unsigned GetNotifiesCount()
+	const unsigned GetNotifiesCount()
 	{
 		return notifies->size();
 	}
@@ -246,31 +244,27 @@ class NotifyService : public Service
 		return false;
 	}
 
-	PerEntryMap &GetEntryMap()
+	const PerEntryMap &GetEntryMap()
 	{
 		return match_entry;
 	}
 
-	PerUserMap &GetUserMap()
+	const PerUserMap &GetUserMap()
 	{
 		return match_user;
 	}
-};
-
-static ServiceReference<NotifyService> notify_service("NotifyService", "notify");
+}
+NotifyList;
 
 NotifyEntry::~NotifyEntry()
 {
-	if (notify_service)
-		notify_service->DelNotify(this);
+	NotifyList.DelNotify(this);
 }
 
 Serializable* NotifyEntry::Unserialize(Serializable *obj, Serialize::Data &data)
 {
-	if (!notify_service)
-		return NULL;
-
 	NotifyEntry *ne;
+
 	if (obj)
 		ne = anope_dynamic_static_cast<NotifyEntry *>(obj);
 	else
@@ -287,7 +281,7 @@ Serializable* NotifyEntry::Unserialize(Serializable *obj, Serialize::Data &data)
 		ne->flags.insert(flags[f]);
 
 	if (!obj)
-		notify_service->AddNotify(ne);
+		NotifyList.AddNotify(ne);
 
 	return ne;
 }
@@ -306,7 +300,7 @@ class NotifyDelCallback : public NumberList
 	{
 		if (!deleted)
 		{
-			source.Reply("No matching entries on the Notify list.");
+			source.Reply("No matching entries on the notify list.");
 			return;
 		}
 
@@ -314,9 +308,9 @@ class NotifyDelCallback : public NumberList
 			source.Reply(READ_ONLY_MODE);
 
 		if (deleted == 1)
-			source.Reply("Deleted 1 entry from the Notify list.");
+			source.Reply("Deleted 1 entry from the notify list.");
 		else
-			source.Reply("Deleted %d entries from the Notify list.");
+			source.Reply("Deleted %d entries from the notify list.", deleted);
 	}
 
 	void HandleNumber(unsigned number) anope_override
@@ -324,27 +318,19 @@ class NotifyDelCallback : public NumberList
 		if (!number)
 			return;
 
-		const NotifyEntry *ne = notify_service->GetNotify(number - 1);
+		const NotifyEntry *ne = NotifyList.GetNotify(number - 1);
 		if (!ne)
 			return;
 
 		Log(LOG_ADMIN, source, cmd) << "to remove " << ne->mask << " from the list";
-
-		++deleted;
-		DoDel(source, ne);
-	}
-
-	static void DoDel(CommandSource &source, const NotifyEntry *ne)
-	{
 		delete ne;
+		++deleted;
 	}
 };
 
 class CommandOSNotify : public Command
 {
  private:
-	ServiceReference<NotifyService> nts;
-
 	void DoAdd(CommandSource &source, const std::vector<Anope::string> &params)
 	{
 		Anope::string expiry, str_flags, mask, reason;
@@ -381,7 +367,7 @@ class CommandOSNotify : public Command
 		 * t = Topics
 		 * u = Usermodes
 		 */
-		Anope::string all_flags = "Scdjkmnpstu";
+		const Anope::string all_flags = "Scdjkmnpstu";
 		str_flags = params[2];
 		if (str_flags == "*")
 			str_flags = all_flags;
@@ -405,7 +391,7 @@ class CommandOSNotify : public Command
 
 		if (mask.find('#') != Anope::string::npos)
 		{
-			Anope::string remaining = sep.GetRemaining();
+			const Anope::string remaining = sep.GetRemaining();
 
 			size_t co = remaining[0] == ':' ? 0 : remaining.rfind(" :");
 			if (co == Anope::string::npos)
@@ -453,7 +439,6 @@ class CommandOSNotify : public Command
 			}
 		}
 
-		/* Make sure the mask is at least user@host and isn't all wildcard */
 		if (mask.find_first_not_of("/~@.*?") == Anope::string::npos)
 		{
 			source.Reply(USERHOST_MASK_TOO_WIDE, mask.c_str());
@@ -465,10 +450,7 @@ class CommandOSNotify : public Command
 			return;
 		}
 
-		/* Create or modify a Notify Entry
-		 * Always delete and create new so it Serializes
-		 */
-		NotifyEntry *ne = nts->FindExactNotify(mask);
+		NotifyEntry *ne = const_cast<NotifyEntry *>(NotifyList.GetNotify(mask));
 		bool created = true;
 		if (ne)
 		{
@@ -483,7 +465,7 @@ class CommandOSNotify : public Command
 		ne->creator = source.GetNick();
 		ne->created = Anope::CurTime;
 		ne->expires = expires;
-		nts->AddNotify(ne);
+		NotifyList.AddNotify(ne);
 
 		if (Anope::ReadOnly)
 			source.Reply(READ_ONLY_MODE);
@@ -491,17 +473,17 @@ class CommandOSNotify : public Command
 		unsigned matches = 0;
 		for (user_map::const_iterator it = UserListByNick.begin(); it != UserListByNick.end(); ++it)
 		{
-			User *u = it->second;
+			const User *u = it->second;
 
-			if (nts->Check(u, ne->mask))
+			if (NotifyList.Check(u, ne->mask))
 			{
-				nts->AddMatch(u, ne);
+				NotifyList.AddMatch(u, ne);
 				matches++;
 			}
 		}
 
-		Log(LOG_ADMIN, source, this) << "to " << (created ? "add" : "modify") << " a Notify on " << mask << " for reason: " << reason << " (matches: " << matches << " user(s))";
-		source.Reply("%s a Notify on %s which matched %d user(s).", (created ? "Added" : "Modified"), mask.c_str(), matches);
+		Log(LOG_ADMIN, source, this) << "to " << (created ? "add" : "modify") << " a notify on " << mask << " for reason: " << reason << " (matches: " << matches << " user(s))";
+		source.Reply("%s a notify on %s which matched %d user(s).", (created ? "Added" : "Modified"), mask.c_str(), matches);
 	}
 
 	void DoDel(CommandSource &source, const std::vector<Anope::string> &params)
@@ -514,9 +496,9 @@ class CommandOSNotify : public Command
 			return;
 		}
 
-		if (nts->GetNotifiesCount() == 0)
+		if (NotifyList.GetNotifiesCount() == 0)
 		{
-			source.Reply("Notify list is empty.");
+			source.Reply("The notify list is empty.");
 			return;
 		}
 
@@ -527,11 +509,10 @@ class CommandOSNotify : public Command
 		}
 		else
 		{
-			const NotifyEntry *ne = nts->FindExactNotify(match);
-
+			const NotifyEntry *ne = NotifyList.GetNotify(match);
 			if (!ne)
 			{
-				source.Reply("\002%s\002 not found on the Notify list.", match.c_str());
+				source.Reply("\002%s\002 not found on the notify list.", match.c_str());
 				return;
 			}
 
@@ -539,8 +520,8 @@ class CommandOSNotify : public Command
 				source.Reply(READ_ONLY_MODE);
 
 			Log(LOG_ADMIN, source, this) << "to remove " << ne->mask << " from the list";
-			source.Reply("\002%s\002 deleted from the Notify list.", ne->mask.c_str());
-			NotifyDelCallback::DoDel(source, ne);
+			source.Reply("\002%s\002 deleted from the notify list.", ne->mask.c_str());
+			delete ne;
 		}
 	}
 
@@ -563,7 +544,7 @@ class CommandOSNotify : public Command
 					if (!number)
 						return;
 
-					const NotifyEntry *ne = notify_service->GetNotify(number - 1);
+					const NotifyEntry *ne = NotifyList.GetNotify(number - 1);
 					if (!ne)
 						return;
 
@@ -582,7 +563,7 @@ class CommandOSNotify : public Command
 		}
 		else
 		{
-			const std::vector<NotifyEntry *> &notifies = nts->GetNotifies();
+			const std::vector<NotifyEntry *> &notifies = NotifyList.GetNotifies();
 			for (unsigned i = 0; i < notifies.size(); ++i)
 			{
 				const NotifyEntry *ne = notifies.at(i);
@@ -605,10 +586,10 @@ class CommandOSNotify : public Command
 		}
 
 		if (list.IsEmpty())
-			source.Reply("No matching entries on the Notify list.");
+			source.Reply("No matching entries on the notify list.");
 		else
 		{
-			source.Reply("Current Notify list:");
+			source.Reply("Current notify list:");
 
 			std::vector<Anope::string> replies;
 			list.Process(replies);
@@ -616,15 +597,15 @@ class CommandOSNotify : public Command
 			for (unsigned i = 0; i < replies.size(); ++i)
 				source.Reply(replies[i]);
 
-			source.Reply("End of Notify list.");
+			source.Reply("End of notify list.");
 		}
 	}
 
 	void DoList(CommandSource &source, const std::vector<Anope::string> &params)
 	{
-		if (nts->GetNotifiesCount() == 0)
+		if (NotifyList.GetNotifiesCount() == 0)
 		{
-			source.Reply("Notify list is empty.");
+			source.Reply("The notify list is empty.");
 			return;
 		}
 
@@ -636,9 +617,9 @@ class CommandOSNotify : public Command
 
 	void DoView(CommandSource &source, const std::vector<Anope::string> &params)
 	{
-		if (nts->GetNotifiesCount() == 0)
+		if (NotifyList.GetNotifiesCount() == 0)
 		{
-			source.Reply("Notify list is empty.");
+			source.Reply("The notify list is empty.");
 			return;
 		}
 
@@ -651,24 +632,23 @@ class CommandOSNotify : public Command
 
 	void DoClear(CommandSource &source, const std::vector<Anope::string> &params)
 	{
-		if (nts->GetNotifiesCount() == 0)
+		if (NotifyList.GetNotifiesCount() == 0)
 		{
-			source.Reply("Notify list is empty.");
+			source.Reply("The notify list is empty.");
 			return;
 		}
 
 		if (Anope::ReadOnly)
 			source.Reply(READ_ONLY_MODE);
 
-		nts->ClearNotifies();
-
-		Log(LOG_ADMIN, source, this) << "to clear the list.";
-		source.Reply("Notify list has been cleared.");
+		NotifyList.ClearNotifies();
+		Log(LOG_ADMIN, source, this) << "to clear the list";
+		source.Reply("The notify list has been cleared.");
 	}
 
 	void DoShow(CommandSource &source, const std::vector<Anope::string> &params)
 	{
-		PerEntryMap &current = nts->GetEntryMap();
+		const PerEntryMap &current = NotifyList.GetEntryMap();
 		if (current.empty())
 		{
 			source.Reply("No matching Users are currently online.");
@@ -722,9 +702,9 @@ class CommandOSNotify : public Command
 
 	void DoRemove(CommandSource &source, const std::vector<Anope::string> &params)
 	{
-		if (nts->GetNotifiesCount() == 0)
+		if (NotifyList.GetNotifiesCount() == 0)
 		{
-			source.Reply("Notify list is empty.");
+			source.Reply("The notify list is empty.");
 			return;
 		}
 
@@ -734,34 +714,33 @@ class CommandOSNotify : public Command
 			return;
 		}
 
-		PerUserMap &current = nts->GetUserMap();
+		const PerUserMap &current = NotifyList.GetUserMap();
 		if (current.empty())
 		{
 			source.Reply("No matching Users are currently online.");
 			return;
 		}
 
-		User *u = User::Find(params[1], true);
+		const User *u = User::Find(params[1], true);
 		if (!u)
 		{
 			source.Reply("No user found by the nick of %s", params[1].c_str());
 			return;
 		}
 
-		if (!nts->IsMatch(u))
+		if (!NotifyList.IsMatch(u))
 		{
 			source.Reply("%s is not currently a matched User.", u->nick.c_str());
 			return;
 		}
 
-		nts->DelMatch(u);
-
+		NotifyList.DelMatch(u);
 		Log(LOG_ADMIN, source, this) << "to remove " << u->nick << " from the matched Users list for Notify";
 		source.Reply("%s has been removed the matched Users list.", u->nick.c_str());
 	}
 
  public:
-	CommandOSNotify(Module *creator) : Command(creator, "operserv/notify", 1, 4), nts("NotifyService", "notify")
+	CommandOSNotify(Module *creator) : Command(creator, "operserv/notify", 1, 4)
 	{
 		this->SetDesc("Manipulate the Notify (watch) list");
 		this->SetSyntax("ADD +\037expiry\037 \037flags\037 \037mask\037 [:]\037reason\037");
@@ -775,9 +754,6 @@ class CommandOSNotify : public Command
 
 	void Execute(CommandSource &source, const std::vector<Anope::string> &params) anope_override
 	{
-		if (!nts)
-			return;
-
 		const Anope::string &subcmd = params[0];
 
 		if (subcmd.equals_ci("ADD"))
@@ -818,10 +794,10 @@ class CommandOSNotify : public Command
 			     "p - Channel Parts\ts - Most Services commands\n"
 			     "t - Channel Topics\tu - User Modes\n"
 			     "S - More Services commands\n"
-			     "\037expiry\037 is specified as an integer followed by one of \037d\37\n"
-			     "(days), \037h\037 (hours), or \037m\037 (minutes). Combinations (such as\n"
-			     "\0371h30m\037) are not permitted. If a unit specifier is not included,\n"
-			     "the default is days (so \037+30\037 by itself means 30 days).\n"
+			     "\037expiry\037 is specified as an integer followed by one of \037d\37 (days),\n"
+			     " \037h\037 (hours), or \037m\037 (minutes). Combinations (such as \0371h30m\037)\n"
+			     "are not permitted. If a unit specifier is not included, the default is days\n"
+			     "(so \037+30\037 by itself means 30 days).\n"
 			     "To add a Notify which does not expire, use \037+0\037.");
 
 		const Anope::string &regexengine = Config->GetBlock("options")->Get<const Anope::string>("regexengine");
@@ -835,30 +811,39 @@ class CommandOSNotify : public Command
 		}
 
 		source.Reply(" ");
-		source.Reply("The \002DEL\002, \002LIST\002, and \002VIEW\002 commands can be used\n"
-			     "with no parameters, with a mask to match, an entry number, or a list\n"
-			     "of entry numbers (1-5 or 1,3 format).");
-		source.Reply(" ");
+		source.Reply("The \002DEL\002 command requires a parameter, one of a mask to match,\n"
+			     "an entry number, or a list of entry numbers (1-5 or 1-3,5 format).\n"
+			     "The \002LIST\002 and \002VIEW\002 commands can be used with no\n"
+			     "parameters or with one of the above parameters, for DEL.\n");
 		source.Reply("The \002CLEAR\002 command clears all entries of the Notify list.");
 		source.Reply(" ");
 		source.Reply("The \002SHOW\002 command lists Notify masks with currently matched Users\n"
-			     "It can accept the same parameters as the \002DEL\002, \002LIST\002,\n"
-			     "and \002VIEW\002 commands, including no parameters at all.");
-		source.Reply(" ");
+			     "It can accept the same parameters as the \002LIST\002 and\n"
+			     "\002VIEW\002 commands, including no parameters at all.");
 		source.Reply("The \002REMOVE\002 command removes a user from the matched Users list.\n"
 			     "This can be useful if a user gets matched by a playful/silly nick change\n"
 			     "or as a temporary removal of tracking of the user.");
 
 		return true;
 	}
+
+	void OnSyntaxError(CommandSource &source, const Anope::string &subcommand)
+	{
+		if (subcommand.equals_ci("ADD"))
+			source.Reply("ADD +\037expiry\037 \037flags\037 \037mask\037 [:]\037reason\037");
+		else if (subcommand.equals_ci("DEL"))
+			source.Reply("DEL [\037mask\037 | \037entry-num\037 | \037list\037]");
+		else if (subcommand.equals_ci("REMOVE"))
+			source.Reply("REMOVE \037nick\037");
+		else
+			this->SendSyntax(source);
+	}
 };
 
 class OSNotify : public Module
 {
-	NotifyService notifyService;
 	Serialize::Type notifyentry_type;
 	CommandOSNotify commandosnotify;
-
 	BotInfo *OperServ;
 
 	const Anope::string BuildNUHR(const User *u)
@@ -882,7 +867,7 @@ class OSNotify : public Module
 
 	void Init()
 	{
-		const std::vector<NotifyEntry *> &notifies = notifyService.GetNotifies();
+		const std::vector<NotifyEntry *> &notifies = NotifyList.GetNotifies();
 		if (notifies.empty())
 			return;
 
@@ -900,9 +885,9 @@ class OSNotify : public Module
 				if (!ne)
 					continue;
 
-				if (notifyService.Check(u, ne->mask))
+				if (NotifyList.Check(u, ne->mask))
 				{
-					notifyService.AddMatch(u, ne);
+					NotifyList.AddMatch(u, ne);
 					matched = true;
 				}
 			}
@@ -917,14 +902,13 @@ class OSNotify : public Module
 
  public:
 	OSNotify(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, THIRD),
-		notifyService(this), notifyentry_type("NotifyEntry", NotifyEntry::Unserialize),
-		commandosnotify(this), OperServ(NULL)
+		notifyentry_type("Notify", NotifyEntry::Unserialize), commandosnotify(this), OperServ(NULL)
 	{
 		if (Anope::VersionMajor() != 2 || Anope::VersionMinor() != 0)
 			throw ModuleException("Requires version 2.0.x of Anope.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("0.8.0");
+		this->SetVersion("1.0.0");
 
 		if (Me && Me->IsSynced())
 			this->Init();
@@ -942,18 +926,18 @@ class OSNotify : public Module
 
 	void OnUserQuit(User *u, const Anope::string &msg) anope_override
 	{
-		if (notifyService.IsMatch(u))
+		if (NotifyList.IsMatch(u))
 		{
-			if (notifyService.HasFlag(u, 'd'))
+			if (NotifyList.HasFlag(u, 'd'))
 				NLog("user", "%s disconnected (reason: %s)", BuildNUHR(u).c_str(), msg.c_str());
 
-			notifyService.DelMatch(u);
+			NotifyList.DelMatch(u);
 		}
 	}
 
 	unsigned CheckUser(User *u)
 	{
-		const std::vector<NotifyEntry *> &notifies = notifyService.GetNotifies();
+		const std::vector<NotifyEntry *> &notifies = NotifyList.GetNotifies();
 		if (!u || notifies.empty() || (u->server && u->server->IsULined()))
 			return 0;
 
@@ -964,12 +948,12 @@ class OSNotify : public Module
 			if (!ne)
 				continue;
 
-			if (notifyService.Check(u, ne->mask))
+			if (NotifyList.Check(u, ne->mask))
 			{
-				if (notifyService.ExistsAlready(u, ne))
+				if (NotifyList.ExistsAlready(u, ne))
 					continue;
 
-				notifyService.AddMatch(u, ne);
+				NotifyList.AddMatch(u, ne);
 				matches++;
 			}
 		}
@@ -985,7 +969,7 @@ class OSNotify : public Module
 		unsigned matches = CheckUser(u);
 		if (matches > 0)
 		{
-			if (notifyService.HasFlag(u, 'c'))
+			if (NotifyList.HasFlag(u, 'c'))
 				NLog("user", "%s connected [matches %d Notify mask(s)]", BuildNUHR(u).c_str(), matches);
 		}
 	}
@@ -995,12 +979,12 @@ class OSNotify : public Module
 		const Anope::string nuhr = oldnick + "!" + u->GetIdent() + "@" + u->host + "#" + u->realname;
 		bool oldmatch = false;
 
-		if (notifyService.IsMatch(u))
+		if (NotifyList.IsMatch(u))
 			oldmatch = true;
 
 		unsigned matches = CheckUser(u);
 
-		if (!notifyService.HasFlag(u, 'n'))
+		if (!NotifyList.HasFlag(u, 'n'))
 			return;
 
 		if (matches > 0)
@@ -1016,13 +1000,13 @@ class OSNotify : public Module
 
 	void OnJoinChannel(User *u, Channel *c) anope_override
 	{
-		if (notifyService.HasFlag(u, 'j'))
+		if (NotifyList.HasFlag(u, 'j'))
 			NLog("channel", "%s joined %s", BuildNUHR(u).c_str(), c->name.c_str());
 	}
 
 	void OnPartChannel(User *u, Channel *c, const Anope::string &channel, const Anope::string &msg) anope_override
 	{
-		if (notifyService.HasFlag(u, 'p'))
+		if (NotifyList.HasFlag(u, 'p'))
 			NLog("channel", "%s parted %s (reason: %s)", BuildNUHR(u).c_str(), c->name.c_str(), msg.c_str());
 	}
 
@@ -1030,10 +1014,10 @@ class OSNotify : public Module
 	{
 		User *u = source.GetUser();
 
-		if (notifyService.HasFlag(target, 'k'))
+		if (NotifyList.HasFlag(target, 'k'))
 			NLog("channel", "%s was kicked from %s by %s (reason: %s)", BuildNUHR(target).c_str(), channel.c_str(), (u ? u->nick.c_str() : "unknown"), kickmsg.c_str());
 
-		if (u && notifyService.HasFlag(u, 'k'))
+		if (u && NotifyList.HasFlag(u, 'k'))
 			NLog("channel", "%s kicked %s from %s (reason: %s)", BuildNUHR(u).c_str(), BuildNUHR(target).c_str(), channel.c_str(), kickmsg.c_str());
 	}
 
@@ -1050,13 +1034,13 @@ class OSNotify : public Module
 
 	void OnUserModeSet(const MessageSource &setter, User *u, const Anope::string &mname) anope_override
 	{
-		if (notifyService.HasFlag(u, 'u'))
+		if (NotifyList.HasFlag(u, 'u'))
 			OnUserMode(setter, u, mname, true);
 	}
 
 	void OnUserModeUnset(const MessageSource &setter, User *u, const Anope::string &mname) anope_override
 	{
-		if (notifyService.HasFlag(u, 'u'))
+		if (NotifyList.HasFlag(u, 'u'))
 			OnUserMode(setter, u, mname, false);
 	}
 
@@ -1066,7 +1050,7 @@ class OSNotify : public Module
 		if (!u)
 			return;
 
-		if (notifyService.HasFlag(u, 'm'))
+		if (NotifyList.HasFlag(u, 'm'))
 		{
 			if (mode->type == MODE_STATUS)
 			{
@@ -1079,7 +1063,7 @@ class OSNotify : public Module
 		else if (mode->type == MODE_STATUS)
 		{
 			const User *target = User::Find(param, false);
-			if (target && notifyService.HasFlag(target, 'm'))
+			if (target && NotifyList.HasFlag(target, 'm'))
 				NLog("channel", "%s %sset channel mode %c (%s) on %s on %s", u->nick.c_str(), (setting ? "" : "un"), mode->mchar, mode->name.c_str(), BuildNUHR(target).c_str(), c->name.c_str());
 		}
 	}
@@ -1106,7 +1090,7 @@ class OSNotify : public Module
 
 		const User *u = source ? source : User::Find(user, false);
 
-		if (u && notifyService.HasFlag(u, 't'))
+		if (u && NotifyList.HasFlag(u, 't'))
 			NLog("channel", "%s changed topic on %s to %s", BuildNUHR(u).c_str(), c->name.c_str(), topic.c_str());
 	}
 
@@ -1117,8 +1101,8 @@ class OSNotify : public Module
 			return;
 
 		const Anope::string &cmd = command->name;
-		if ((!notifyService.HasFlag(u, 's') && !Anope::Match(cmd, "*/set/*")) ||
-		    (!notifyService.HasFlag(u, 'S') && Anope::Match(cmd, "*/set/*")))
+		if ((!NotifyList.HasFlag(u, 's') && !Anope::Match(cmd, "*/set/*")) ||
+		    (!NotifyList.HasFlag(u, 'S') && Anope::Match(cmd, "*/set/*")))
 			return;
 
 		Anope::string strparams;
