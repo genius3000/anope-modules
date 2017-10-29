@@ -19,10 +19,6 @@ command { service = "HostServ"; name = "OFFERLIST"; command = "hostserv/offerlis
  * Don't forget to add 'hostserv/offer' to your oper permissions
  */
 
-/* TODO/Thoughts
- * Test and moar test!
- */
-
 #include "module.h"
 
 
@@ -90,7 +86,7 @@ class HostOffersList
 			delete offers->at(i - 1);
 	}
 
-	void Expire(HostOffer *ho)
+	void Expire(const HostOffer *ho)
 	{
 		Log(Config->GetClient("HostServ"), "expire/offer") << "Expiring vHost Offer " << (!ho->ident.empty() ? ho->ident + "@" : "") << ho->host;
 		delete ho;
@@ -101,11 +97,11 @@ class HostOffersList
 		return offers->size();
 	}
 
-	HostOffer *FindExact(const Anope::string &match)
+	const HostOffer *Get(const Anope::string &match)
 	{
 		for (unsigned i = offers->size(); i > 0; --i)
 		{
-			HostOffer *ho = offers->at(i - 1);
+			const HostOffer *ho = offers->at(i - 1);
 			const Anope::string vhost = (!ho->ident.empty() ? ho->ident + "@" : "") + ho->host;
 
 			if (ho->expires && ho->expires <= Anope::CurTime)
@@ -117,13 +113,13 @@ class HostOffersList
 		return NULL;
 	}
 
-	HostOffer *Get(unsigned i)
+	const HostOffer *Get(const unsigned number)
 	{
-		if (i >= offers->size())
+		if (number >= offers->size())
 			return NULL;
 
-		HostOffer *ho = offers->at(i);
-		if (ho && ho->expires && ho->expires <= Anope::CurTime)
+		const HostOffer *ho = offers->at(number);
+		if (ho->expires && ho->expires <= Anope::CurTime)
 		{
 			Expire(ho);
 			return NULL;
@@ -159,6 +155,7 @@ HostOffer::~HostOffer()
 Serializable* HostOffer::Unserialize(Serializable *obj, Serialize::Data &data)
 {
 	HostOffer *ho;
+
 	if (obj)
 		ho = anope_dynamic_static_cast<HostOffer *>(obj);
 	else
@@ -209,7 +206,7 @@ class OfferDelCallback : public NumberList
 		if (!number)
 			return;
 
-		HostOffer *ho = HostOffersList.Get(number - 1);
+		const HostOffer *ho = HostOffersList.Get(number - 1);
 		if (!ho)
 			return;
 
@@ -220,6 +217,13 @@ class OfferDelCallback : public NumberList
 };
 
 /* Ident and Host functions */
+enum ValidateReturn
+{
+	VALIDATE_PASS,
+	VALIDATE_TOOLONG,
+	VALIDATE_INVCHAR
+};
+
 bool isvalidchar(char c)
 {
 	if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '-')
@@ -228,28 +232,28 @@ bool isvalidchar(char c)
 	return false;
 }
 
-unsigned ValidateIdent(const Anope::string &ident)
+ValidateReturn ValidateIdent(const Anope::string &ident)
 {
 	if (ident.length() > Config->GetBlock("networkinfo")->Get<unsigned>("userlen"))
-		return 1;
+		return VALIDATE_TOOLONG;
 
 	for (Anope::string::const_iterator s = ident.begin(), s_end = ident.end(); s != s_end; ++s)
 	{
 		if (!isvalidchar(*s))
-			return 2;
+			return VALIDATE_INVCHAR;
 	}
 
-	return 0;
+	return VALIDATE_PASS;
 }
 
-unsigned ValidateHost(const Anope::string &host)
+ValidateReturn ValidateHost(const Anope::string &host)
 {
 	if (host.length() > Config->GetBlock("networkinfo")->Get<unsigned>("hostlen"))
-		return 1;
+		return VALIDATE_TOOLONG;
 	if (!IRCD->IsHostValid(host))
-		return 2;
+		return VALIDATE_INVCHAR;
 
-	return 0;
+	return VALIDATE_PASS;
 }
 
 const Anope::string ReplaceArgs(const Anope::string &ih, const Anope::string &nick)
@@ -348,23 +352,20 @@ class CommandHSOffer : public Command
 			else
 				sub_ident = ident;
 
-			unsigned ret = 0;
-			if ((ret = ValidateIdent(sub_ident)) > 0)
+			ValidateReturn ret = ValidateIdent(sub_ident);
+			if (ret == VALIDATE_TOOLONG)
 			{
-				if (ret == 1)
+				/* Let's give $account and $nick a chance, it might be good for other users */
+				if (!Anope::Match(ident, "*$account*") && !Anope::Match(ident, "*$nick*"))
 				{
-					/* Let's give $account and $nick a chance, it might be good for other users */
-					if (!Anope::Match(ident, "*$account*") && !Anope::Match(ident, "*$nick*"))
-					{
-						source.Reply(HOST_SET_IDENTTOOLONG, Config->GetBlock("networkinfo")->Get<unsigned>("userlen"));
-						return;
-					}
-				}
-				else if (ret == 2)
-				{
-					source.Reply(HOST_SET_IDENT_ERROR);
+					source.Reply(HOST_SET_IDENTTOOLONG, Config->GetBlock("networkinfo")->Get<unsigned>("userlen"));
 					return;
 				}
+			}
+			else if (ret == VALIDATE_INVCHAR)
+			{
+				source.Reply(HOST_SET_IDENT_ERROR);
+				return;
 			}
 		}
 
@@ -374,19 +375,20 @@ class CommandHSOffer : public Command
 		else
 			sub_host = host;
 
-		unsigned ret = 0;
-		if ((ret = ValidateHost(sub_host)) > 0)
+		ValidateReturn ret = ValidateHost(sub_host);
+		if (ret == VALIDATE_TOOLONG)
 		{
-			if (ret == 1)
-				source.Reply(HOST_SET_TOOLONG, Config->GetBlock("networkinfo")->Get<unsigned>("hostlen"));
-			else if (ret == 2)
-				source.Reply(HOST_SET_ERROR);
-
+			source.Reply(HOST_SET_TOOLONG, Config->GetBlock("networkinfo")->Get<unsigned>("hostlen"));
+			return;
+		}
+		else if (ret == VALIDATE_INVCHAR)
+		{
+			source.Reply(HOST_SET_ERROR);
 			return;
 		}
 
 		const Anope::string full_vHost = (!ident.empty() ? ident + "@" : "") + host;
-		if (HostOffersList.FindExact(full_vHost))
+		if (HostOffersList.Get(full_vHost))
 		{
 			source.Reply("Host offer \002%s\002 already exists.", full_vHost.c_str());
 			return;
@@ -422,7 +424,7 @@ class CommandHSOffer : public Command
 		}
 		else
 		{
-			const HostOffer *ho = HostOffersList.FindExact(match);
+			const HostOffer *ho = HostOffersList.Get(match);
 			if (!ho)
 			{
 				source.Reply("\002%s\002 not found on the host offer list.", match.c_str());
@@ -483,7 +485,7 @@ class CommandHSOffer : public Command
 			{
 				const HostOffer *ho = list_offers.at(i);
 				if (!ho)
-					return;
+					continue;
 
 				const Anope::string vHost = (!ho->ident.empty() ? ho->ident + "@" : "") + ho->host;
 				if (match.empty() || match.equals_ci(vHost) || Anope::Match(vHost, match))
@@ -619,8 +621,8 @@ class CommandHSOffer : public Command
 		source.Reply("Available arguments are:\n"
 			     "$account - Display nick of the user's account\n"
 			     "$nick - Nick alias\n"
-			     "$regepoch - Time <nick> was registered in epoch time\n"
 			     "$regdate - Date <nick> was registered in YYYY-MM-DD\n"
+			     "$regepoch - Time <nick> was registered in epoch time\n"
 			     "$netname - Network Name\n"
 			     "The \037reason\037 is visible to users.");
 		source.Reply(" ");
@@ -637,8 +639,10 @@ class CommandHSOffer : public Command
 	{
 		if (subcommand.equals_ci("ADD"))
 			source.Reply("ADD +\037expiry\037 \037vHost\037 \037reason\037");
-		if (subcommand.equals_ci("DEL"))
+		else if (subcommand.equals_ci("DEL"))
 			source.Reply("DEL {\037vHost\037 | \037entry-num\037 | \037list\037}");
+		else
+			this->SendSyntax(source);
 	}
 };
 
@@ -648,7 +652,7 @@ class CommandHSOfferList : public Command
 	void DoTake(CommandSource &source, const std::vector<Anope::string> &params)
 	{
 		NickAlias *na = NickAlias::Find(source.GetNick());
-		HostOffer *ho;
+		const HostOffer *ho;
 
 		if (!na || na->nc != source.GetAccount())
 		{
@@ -662,7 +666,7 @@ class CommandHSOfferList : public Command
 			return;
 		}
 
-		time_t take_delay = Config->GetModule(this->module)->Get<time_t>("takedelay");
+		const time_t take_delay = Config->GetModule(this->module)->Get<time_t>("takedelay");
 		if (take_delay > 0 && na->HasVhost() && na->GetVhostCreated() + take_delay > Anope::CurTime)
 		{
 			source.Reply("Please wait %d seconds before taking a new vHost.", take_delay);
@@ -684,7 +688,7 @@ class CommandHSOfferList : public Command
 
 		if (match.find_first_not_of("1234567890") == Anope::string::npos)
 		{
-			unsigned number = convertTo<unsigned>(match);
+			const unsigned number = convertTo<unsigned>(match);
 			ho = HostOffersList.Get(number - 1);
 			if (!ho)
 			{
@@ -694,7 +698,7 @@ class CommandHSOfferList : public Command
 		}
 		else
 		{
-			ho = HostOffersList.FindExact(match);
+			ho = HostOffersList.Get(match);
 			if (!ho)
 			{
 				source.Reply("\002%s\002 not found on the host offer list.", match.c_str());
@@ -708,22 +712,22 @@ class CommandHSOfferList : public Command
 		const Anope::string &ident = ReplaceArgs(ho->ident, source.GetNick());
 		const Anope::string &host = ReplaceArgs(ho->host, source.GetNick());
 
-		unsigned ret = 0;
-		if ((ret = ValidateIdent(ident)) > 0)
+		ValidateReturn ret;
+		if ((ret = ValidateIdent(ident)) != VALIDATE_PASS)
 		{
-			if (ret == 1)
+			if (ret == VALIDATE_TOOLONG)
 				source.Reply(HOST_SET_IDENTTOOLONG, Config->GetBlock("networkinfo")->Get<unsigned>("userlen"));
-			else if (ret == 2)
+			else if (ret == VALIDATE_INVCHAR)
 				source.Reply(HOST_SET_IDENT_ERROR);
 
 			return;
 		}
 
-		if ((ret = ValidateHost(host)) > 0)
+		if ((ret = ValidateHost(host)) != VALIDATE_PASS)
 		{
-			if (ret == 1)
+			if (ret == VALIDATE_TOOLONG)
 				source.Reply(HOST_SET_TOOLONG, Config->GetBlock("networkinfo")->Get<unsigned>("hostlen"));
-			else if (ret == 2)
+			else if (ret == VALIDATE_INVCHAR)
 				source.Reply(HOST_SET_ERROR);
 
 			return;
@@ -736,7 +740,7 @@ class CommandHSOfferList : public Command
 
 	void DoList(CommandSource &source, const std::vector<Anope::string> &params)
 	{
-		NickAlias *na = NickAlias::Find(source.GetNick());
+		const NickAlias *na = NickAlias::Find(source.GetNick());
 
 		if (!na || na->nc != source.GetAccount())
 		{
@@ -781,9 +785,9 @@ class CommandHSOfferList : public Command
 
 					const Anope::string &ident = ReplaceArgs(ho->ident, source.GetNick());
 					const Anope::string &host = ReplaceArgs(ho->host, source.GetNick());
-					unsigned ret_ident = ValidateIdent(ident);
-					unsigned ret_host = ValidateHost(host);
-					bool invalid = (ret_ident || ret_host);
+					ValidateReturn ret_ident = ValidateIdent(ident);
+					ValidateReturn ret_host = ValidateHost(host);
+					bool invalid = (ret_ident != VALIDATE_PASS || ret_host != VALIDATE_PASS);
 
 					ListFormatter::ListEntry entry;
 					entry["Number"] = stringify(number);
@@ -811,9 +815,9 @@ class CommandHSOfferList : public Command
 				{
 					const Anope::string &ident = ReplaceArgs(ho->ident, source.GetNick());
 					const Anope::string &host = ReplaceArgs(ho->host, source.GetNick());
-					unsigned ret_ident = ValidateIdent(ident);
-					unsigned ret_host = ValidateHost(host);
-					bool invalid = (ret_ident || ret_host);
+					ValidateReturn ret_ident = ValidateIdent(ident);
+					ValidateReturn ret_host = ValidateHost(host);
+					bool invalid = (ret_ident != VALIDATE_PASS || ret_host != VALIDATE_PASS);
 
 					ListFormatter::ListEntry entry;
 					entry["Number"] = stringify(i + 1);
@@ -864,9 +868,16 @@ class CommandHSOfferList : public Command
 		this->SendSyntax(source);
 		source.Reply(" ");
 		source.Reply("List or take an offered vHost.");
-		source.Reply("With no parameters a complete list is shown. You can filter that with\n"
-			     "a wildcard \037user@host\037 or \037host\037 mask, an entry-number,\n"
-			     "or a list (1-5 or 1-3,5 format).");
+		source.Reply("The offers may contain substitution arguments which start with a '$':\n"
+			     "$account - Your account name (main display nick)\n"
+			     "$nick - Your current nick\n"
+			     "$regdate - Date your nick was registered in YYYY-MM-DD\n"
+			     "$regepoch - Time your nick was registered in epoch time\n"
+			     "$netname - This IRC Network's Name\n");
+		source.Reply("An \002[Invalid]\002 after \037Your vHost\037 means that substitution\n"
+			     "specific to you causes the Offer vHost to become invalid to the network.");
+		source.Reply("With no parameters a complete list is shown. You can filter that with a wildcard\n"
+			     "\037user@host\037 or \037host\037 mask, an entry-number, or a list (1-5 or 1-3,5 format).");
 		source.Reply("The \002TAKE\002 command requires either the exact \037Offer vHost\037 as\n"
 			     "shown or the entry-number.");
 
@@ -877,6 +888,8 @@ class CommandHSOfferList : public Command
 	{
 		if (subcommand.equals_ci("TAKE"))
 			source.Reply("TAKE {\037vHost\037 | \037entry-num\037}");
+		else
+			this->SendSyntax(source);
 	}
 };
 
@@ -895,7 +908,7 @@ class HSOffer : public Module
 			throw ModuleException("Requires version 2.0.x of Anope.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("0.8.0");
+		this->SetVersion("1.0.0");
 	}
 
 	void OnReload(Configuration::Conf *conf) anope_override
