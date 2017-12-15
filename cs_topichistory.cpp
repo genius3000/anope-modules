@@ -361,7 +361,7 @@ class CSTopicHistory : public Module
 			throw ModuleException("Requires version 2.0.x of Anope.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.0.0");
+		this->SetVersion("1.0.1");
 	}
 
 	void OnReload(Configuration::Conf *conf) anope_override
@@ -408,11 +408,11 @@ class CSTopicHistory : public Module
 			delete (*entries)->at((*entries)->size() - 1);
 
 		/* The below code is doing:
-		 * - string 'user' is likely a UUID, we want their nick
+		 * - If source isn't given, try to find string 'user' (could be a UUID)
 		 * - get the topic set time so a channel creation doesn't trick us into using current time
 		 * - add this entry to the beginning to keep them in chronological order
 		 */
-		User *u = User::Find(user, false);
+		User *u = source ? source : User::Find(user);
 		time_t ts = c->ci->last_topic_time ? c->ci->last_topic_time : Anope::CurTime;
 		(*entries)->insert((*entries)->begin(), new TopicHistoryEntry(c->ci, topic, u ? u->nick : "unknown", ts));
 	}
