@@ -12,6 +12,10 @@ or via temporary kick-bans.
 Stores a (config set maximum) number of historical topics for a channel. Allows easy
 restoration of a historical topic, especially when the topic is accidently changed.
 
+### [hs_offer](https://modules.anope.org/index.php?page=view&id=284 "View module on the Anope Module Site")
+Offer specialized vHosts to users, with substitution arguments available. They can be
+permanent or limited time (expiry).
+
 ### [m_expirenotice](https://modules.anope.org/index.php?page=view&id=277 "View module on the Anope Module Site")
 To send a notice (via email and/or memo) to a user that their registered nickname or
 channel is soon to expire and/or expired. Fully configurable with what to send for and
@@ -19,3 +23,12 @@ how to send the notices, when to send the pre-expiry notices, and the messages s
 
 ### [os_expiring](https://modules.anope.org/index.php?page=view&id=276 "View module on the Anope Module Site")
 A simple Services Oper command to list out soon to expire nicknames or channels.
+
+### [os_notify](https://modules.anope.org/index.php?page=view&id=283 "View module on the Anope Module Site")
+This module allows Opers to be notified of flagged events done by Users matching
+a mask (wildcard and regex allowed).
+
+### [os_swhois](https://modules.anope.org/index.php?page=view&id=282 "View module on the Anope Module Site")
+A different (and newer) version of OS_SWHOIS; the same configuration can be used from
+the other os_swhois module to this one. Provides a fully featured SWHOIS system with
+features and syntax similar to the rest of Anope.
