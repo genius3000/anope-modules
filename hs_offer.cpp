@@ -1,7 +1,7 @@
 /*
  * HostServ Offer
  *
- * (C) 2017 - genius3000 (genius3000@g3k.solutions)
+ * (C) 2017-2018 - genius3000 (genius3000@g3k.solutions)
  * Please refer to the GPL License in use by Anope at:
  * https://github.com/anope/anope/blob/master/docs/COPYING
  *
@@ -12,10 +12,11 @@
  * Syntax (user): OFFERLIST [TAKE] [vhost | entry-num | list]
  *
  * Configuration to put into your hostserv config:
-module { name = "hs_offer"; takedelay = 600; }
+module { name = "hs_offer"; takedelay = 7d; }
 command { service = "HostServ"; name = "OFFER"; command = "hostserv/offer"; permission = "hostserv/offer"; }
 command { service = "HostServ"; name = "OFFERLIST"; command = "hostserv/offerlist"; }
  *
+ * takedelay: duration between allowed TAKEs
  * Don't forget to add 'hostserv/offer' to your oper permissions
  */
 
@@ -669,7 +670,7 @@ class CommandHSOfferList : public Command
 		const time_t take_delay = Config->GetModule(this->module)->Get<time_t>("takedelay");
 		if (take_delay > 0 && na->HasVhost() && na->GetVhostCreated() + take_delay > Anope::CurTime)
 		{
-			source.Reply("Please wait %d seconds before taking a new vHost.", take_delay);
+			source.Reply("Please wait %s before taking a new vHost.", Anope::Duration(take_delay, source.GetAccount()).c_str());
 			return;
 		}
 
@@ -908,7 +909,7 @@ class HSOffer : public Module
 			throw ModuleException("Requires version 2.0.x of Anope.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.0.0");
+		this->SetVersion("1.0.1");
 	}
 
 	void OnReload(Configuration::Conf *conf) anope_override
