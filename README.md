@@ -26,6 +26,11 @@ Syncs X-Lines (G, Z, R) from the uplink IRCd to the AKILL list. Works on server 
 and as X-Lines are added or removed. Requires OperServ, AKILL, and the InspIRCd 2.0
 protocol (aka only works with InspIRCd 2.0).
 
+### [os_chantrap](https://modules.anope.org/index.php?page=view&id=286 "View module on the Anope Module Site")
+This module lets you create "channel traps" to KILL or AKILL users that join them.
+The channels can be active (with service bots joined to and modes set) or a
+wildcard/regex mask that is matched on user joins.
+
 ### [os_expiring](https://modules.anope.org/index.php?page=view&id=276 "View module on the Anope Module Site")
 A simple Services Oper command to list out soon to expire nicknames or channels.
 
