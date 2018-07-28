@@ -22,7 +22,9 @@ channel is soon to expire and/or expired. Fully configurable with what to send f
 how to send the notices, when to send the pre-expiry notices, and the messages sent.
 
 ### [m_xlinetoakill](https://modules.anope.org/index.php?page=view&id=285 "View module on the Anope Module Site")
-Syncs X-Lines (G, Z, R) from the uplink IRCd to the AKILL list. Works on server sync and as X-Lines are added or removed. Requires OperServ, AKILL, and the InspIRCd 2.0 protocol (aka only works with InspIRCd 2.0).
+Syncs X-Lines (G, Z, R) from the uplink IRCd to the AKILL list. Works on server sync
+and as X-Lines are added or removed. Requires OperServ, AKILL, and the InspIRCd 2.0
+protocol (aka only works with InspIRCd 2.0).
 
 ### [os_expiring](https://modules.anope.org/index.php?page=view&id=276 "View module on the Anope Module Site")
 A simple Services Oper command to list out soon to expire nicknames or channels.
