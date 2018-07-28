@@ -1,13 +1,13 @@
 /*
  * OperServ Notify
  *
- * (C) 2017 - genius3000 (genius3000@g3k.solutions)
+ * (C) 2017-2018 - genius3000 (genius3000@g3k.solutions)
  * Please refer to the GPL License in use by Anope at:
  * https://github.com/anope/anope/blob/master/docs/COPYING
  *
  * Allows Opers to be notified of flagged events done by Users matching a mask.
  * Masks are the same as AKILL: nick!user@host#real (only needing user@host) and allowing
- * regex matching if enabled.
+ * regex matching if enabled. Channel masks can be used to track users that join them.
  * Notification is done via the log method and is therefore configurable.
  * Flags control which events are logged and are listed in the Command Help or as a
  * code comment in the DoAdd function.
@@ -30,10 +30,6 @@ log { target = "#services-notify"; bot = "OperServ"; other = "notify/..."; }
  * notify/channel
  * notify/commands
  * Expiring entries follow the log format of: expire/notify
- */
-
-/* TODO/Thoughts
- * - Test, test, and more test!
  */
 
 #include "module.h"
@@ -165,14 +161,26 @@ class NotifyList
 		/* Regex mask: Matches against u@h and n!u@h#r only */
 		if (mask.length() >= 2 && mask[0] == '/' && mask[mask.length() - 1] == '/')
 		{
-			Anope::string uh = u->GetIdent() + '@' + u->host, nuhr = u->nick + '!' + uh + '#' + u->realname;
-			Anope::string stripped_mask = mask.substr(1, mask.length() - 2);
-			return (Anope::Match(uh, stripped_mask, false, true) || Anope::Match(nuhr, stripped_mask, false, true));
+			const Anope::string uh = u->GetIdent() + '@' + u->host;
+			const Anope::string nuhr = u->nick + '!' + uh + '#' + u->realname;
+			return (Anope::Match(uh, mask, false, true) || Anope::Match(nuhr, mask, false, true));
 		}
 
 		/* Use 'modes' Entry to perform matching per item (nick, user, host, real) */
 		Entry notify_mask("", mask);
 		return notify_mask.Matches(const_cast<User *>(u), true);
+	}
+
+	/* Check if a Channel matches a mask */
+	bool Check(const Channel *c, const Anope::string &mask)
+	{
+		/* Regex mask */
+		if (mask.length() >= 2 && mask[0] == '/' && mask[mask.length() - 1] == '/')
+		{
+			return Anope::Match(c->name, mask, false, true);
+		}
+
+		return mask.equals_ci(c->name);
 	}
 
 	const std::vector<NotifyEntry *> &GetNotifies()
@@ -369,13 +377,17 @@ class CommandOSNotify : public Command
 		 */
 		const Anope::string all_flags = "Scdjkmnpstu";
 		str_flags = params[2];
+
 		if (str_flags == "*")
+		{
 			str_flags = all_flags;
-		if (str_flags.find_first_not_of(all_flags) != Anope::string::npos)
+		}
+		else if (str_flags.find_first_not_of(all_flags) != Anope::string::npos)
 		{
 			source.Reply("Incorrect flags character(s) given.");
 			return;
 		}
+
 		std::set<char> flags;
 		for (unsigned f = 0; f < str_flags.length(); ++f)
 			flags.insert(str_flags[f]);
@@ -389,7 +401,11 @@ class CommandOSNotify : public Command
 			return;
 		}
 
-		if (mask.find('#') != Anope::string::npos)
+		size_t pound = mask.find('#');
+		size_t at = mask.find('@');
+
+		/* If '#' is after '@', we've got a real name */
+		if ((pound != Anope::string::npos && at != Anope::string::npos) && pound > at)
 		{
 			const Anope::string remaining = sep.GetRemaining();
 
@@ -408,7 +424,9 @@ class CommandOSNotify : public Command
 			mask.trim();
 		}
 		else
+		{
 			reason = sep.GetRemaining();
+		}
 
 		if (mask.length() >= 2 && mask[0] == '/' && mask[mask.length() - 1] == '/')
 		{
@@ -439,14 +457,20 @@ class CommandOSNotify : public Command
 			}
 		}
 
-		if (mask.find_first_not_of("/~@.*?") == Anope::string::npos)
+		if (mask.find_first_not_of("/~@.*?#") == Anope::string::npos)
 		{
 			source.Reply(USERHOST_MASK_TOO_WIDE, mask.c_str());
 			return;
 		}
-		else if (mask.find('@') == Anope::string::npos)
+
+		/* Valid masks either include a '@' or have '#' first (non-regex)
+		 * Regex chan matches just require '#' in the mask
+		 */
+		else if ((mask.find('@') == Anope::string::npos) &&
+			(mask[0] != '#') &&
+			(mask.length() < 2 || mask[0] != '/' || mask.find('#') == Anope::string::npos))
 		{
-			source.Reply(BAD_USERHOST_MASK);
+			source.Reply("Mask must be at least \037user\037@\037host\037 or have a \037#\037 for channel masks.");
 			return;
 		}
 
@@ -471,14 +495,40 @@ class CommandOSNotify : public Command
 			source.Reply(READ_ONLY_MODE);
 
 		unsigned matches = 0;
-		for (user_map::const_iterator it = UserListByNick.begin(); it != UserListByNick.end(); ++it)
-		{
-			const User *u = it->second;
 
-			if (NotifyList.Check(u, ne->mask))
+		/* If mask contains '#' but not '@', it's a channel mask */
+		if (pound != Anope::string::npos && at == Anope::string::npos)
+		{
+			for (channel_map::const_iterator it = ChannelList.begin(); it != ChannelList.end(); ++it)
 			{
-				NotifyList.AddMatch(u, ne);
-				matches++;
+				const Channel *c = it->second;
+
+				if (!NotifyList.Check(c, ne->mask))
+					continue;
+
+				for (Channel::ChanUserList::const_iterator i = c->users.begin(); i != c->users.end(); ++i)
+				{
+					const User *u = i->first;
+
+					if (NotifyList.ExistsAlready(u, ne))
+						continue;
+
+					NotifyList.AddMatch(u, ne);
+					matches++;
+				}
+			}
+		}
+		else
+		{
+			for (user_map::const_iterator it = UserListByNick.begin(); it != UserListByNick.end(); ++it)
+			{
+				const User *u = it->second;
+
+				if (NotifyList.Check(u, ne->mask))
+				{
+					NotifyList.AddMatch(u, ne);
+					matches++;
+				}
 			}
 		}
 
@@ -558,7 +608,8 @@ class CommandOSNotify : public Command
 					entry["Expires"] = Anope::Expires(ne->expires, source.nc);
 					list.AddEntry(entry);
 				}
-			} nl_list(source, list, match);
+			}
+			nl_list(source, list, match);
 			nl_list.Process();
 		}
 		else
@@ -784,7 +835,8 @@ class CommandOSNotify : public Command
 		source.Reply(" ");
 		source.Reply("The \002ADD\002 command adds the given mask to the Notify list.\n"
 			     "Reason \002must\002 be given and the mask should be in the format of\n"
-			     "nick!user@host#real name, though all that is required is user@host.\n"
+			     "nick!user@host#real name (though all that is required is user@host) or\n"
+			     "#channel to track users that join a matching channel.\n"
 			     "If a real name is specified, the reason must be prepended with a :.\n"
 			     "Flags are used to decide what to track, for all use \037*\037.\n"
 			     "The available flags are:\n"
@@ -805,8 +857,8 @@ class CommandOSNotify : public Command
 		{
 			source.Reply(" ");
 			source.Reply("Regex matches are also supported using the %s engine.\n"
-				     "Note that this will ONLY match against either \n"
-				     "\037user@host\037 or \037nick!user@host#real\037\n"
+				     "Note that for a user mask, this will ONLY match against\n"
+				     "either \037user@host\037 or \037nick!user@host#real\037\n"
 				     "Enclose your pattern in // if this is desired.", regexengine.c_str());
 		}
 
@@ -900,6 +952,38 @@ class OSNotify : public Module
 			NLog("user", "Matched %d user(s) against the Notify list", matches);
 	}
 
+	unsigned CheckUserOrChannel(User *u, Channel *c = NULL, bool wantChan = false)
+	{
+		const std::vector<NotifyEntry *> &notifies = NotifyList.GetNotifies();
+		if (!u || (wantChan && !c) || notifies.empty() || (u->server && u->server->IsULined()))
+			return 0;
+
+		unsigned matches = 0;
+		for (unsigned i = notifies.size(); i > 0; --i)
+		{
+			const NotifyEntry *ne = notifies.at(i - 1);
+			if (!ne)
+				continue;
+
+			bool matched = false;
+			if (wantChan && c)
+				matched = NotifyList.Check(c, ne->mask);
+			else if (!wantChan)
+				matched = NotifyList.Check(u, ne->mask);
+
+			if (matched)
+			{
+				if (NotifyList.ExistsAlready(u, ne))
+					continue;
+
+				NotifyList.AddMatch(u, ne);
+				matches++;
+			}
+		}
+
+		return matches;
+	}
+
  public:
 	OSNotify(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, THIRD),
 		notifyentry_type("Notify", NotifyEntry::Unserialize), commandosnotify(this), OperServ(NULL)
@@ -908,7 +992,7 @@ class OSNotify : public Module
 			throw ModuleException("Requires version 2.0.x of Anope.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.0.0");
+		this->SetVersion("1.1.0");
 
 		if (Me && Me->IsSynced())
 			this->Init();
@@ -924,6 +1008,19 @@ class OSNotify : public Module
 		this->Init();
 	}
 
+	void OnUserConnect(User *u, bool &) anope_override
+	{
+		if (Me && !Me->IsSynced())
+			return;
+
+		unsigned matches = CheckUserOrChannel(u);
+		if (matches > 0)
+		{
+			if (NotifyList.HasFlag(u, 'c'))
+				NLog("user", "%s connected [matches %d Notify mask(s)]", BuildNUHR(u).c_str(), matches);
+		}
+	}
+
 	void OnUserQuit(User *u, const Anope::string &msg) anope_override
 	{
 		if (NotifyList.IsMatch(u))
@@ -935,45 +1032,6 @@ class OSNotify : public Module
 		}
 	}
 
-	unsigned CheckUser(User *u)
-	{
-		const std::vector<NotifyEntry *> &notifies = NotifyList.GetNotifies();
-		if (!u || notifies.empty() || (u->server && u->server->IsULined()))
-			return 0;
-
-		unsigned matches = 0;
-		for (unsigned i = notifies.size(); i > 0; --i)
-		{
-			const NotifyEntry *ne = notifies.at(i - 1);
-			if (!ne)
-				continue;
-
-			if (NotifyList.Check(u, ne->mask))
-			{
-				if (NotifyList.ExistsAlready(u, ne))
-					continue;
-
-				NotifyList.AddMatch(u, ne);
-				matches++;
-			}
-		}
-
-		return matches;
-	}
-
-	void OnUserConnect(User *u, bool &) anope_override
-	{
-		if (Me && !Me->IsSynced())
-			return;
-
-		unsigned matches = CheckUser(u);
-		if (matches > 0)
-		{
-			if (NotifyList.HasFlag(u, 'c'))
-				NLog("user", "%s connected [matches %d Notify mask(s)]", BuildNUHR(u).c_str(), matches);
-		}
-	}
-
 	void OnUserNickChange(User *u, const Anope::string &oldnick) anope_override
 	{
 		const Anope::string nuhr = oldnick + "!" + u->GetIdent() + "@" + u->host + "#" + u->realname;
@@ -982,7 +1040,7 @@ class OSNotify : public Module
 		if (NotifyList.IsMatch(u))
 			oldmatch = true;
 
-		unsigned matches = CheckUser(u);
+		unsigned matches = CheckUserOrChannel(u);
 
 		if (!NotifyList.HasFlag(u, 'n'))
 			return;
@@ -1000,7 +1058,24 @@ class OSNotify : public Module
 
 	void OnJoinChannel(User *u, Channel *c) anope_override
 	{
-		if (NotifyList.HasFlag(u, 'j'))
+		bool oldmatch = false;
+
+		if (NotifyList.IsMatch(u))
+			oldmatch = true;
+
+		unsigned matches = CheckUserOrChannel(u, c, true);
+
+		if (!NotifyList.HasFlag(u, 'j'))
+			return;
+
+		if (matches > 0)
+		{
+			if (oldmatch)
+				NLog("channel", "%s joined %s [matches an additional %d Notify mask(s)]", BuildNUHR(u).c_str(), c->name.c_str(), matches);
+			else
+				NLog("channel", "%s joined %s [matches %d Notify mask(s)]", BuildNUHR(u).c_str(), c->name.c_str(), matches);
+		}
+		else if (oldmatch)
 			NLog("channel", "%s joined %s", BuildNUHR(u).c_str(), c->name.c_str());
 	}
 
