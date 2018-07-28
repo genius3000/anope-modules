@@ -1,7 +1,7 @@
 /*
  * OperServ ChanTrap
  *
- * (C) 2017 - genius3000 (genius3000@g3k.solutions)
+ * (C) 2017-2018 - genius3000 (genius3000@g3k.solutions)
  * Please refer to the GPL License in use by Anope at:
  * https://github.com/anope/anope/blob/master/docs/COPYING
  *
@@ -18,10 +18,6 @@ module { name = "os_chantrap"; killreason = "I know what you did last join!"; ak
 command { service = "OperServ"; name = "CHANTRAP"; command = "operserv/chantrap"; permission = "operserv/chantrap"; }
  *
  * Don't forget to add 'operserv/chantrap' to your oper permissions
- */
-
-/* TODO
- * - Get actual bots to join first over created bots (config check?)
  */
 
 #include "module.h"
@@ -68,45 +64,120 @@ struct ChanTrapInfo : Serializable
 	static Serializable* Unserialize(Serializable *obj, Serialize::Data &data);
 };
 
-/* Track our Created Bots */
+/* We create bots separate of the BotServ system, we don't want these being used elsewhere
+ * This class holds the information (User) of a created bot along with its functions
+ */
+class CreatedBotInfo : public User
+{
+ public:
+	CreatedBotInfo(const Anope::string &_nick) : User(_nick, "ct", Me->GetName(), "", "", Me, "CT Service", Anope::CurTime, "", IRCD ? IRCD->UID_Retrieve() : "", NULL)
+	{
+		if (Me && Me->IsSynced())
+		{
+			Anope::string botmodes = Config->GetModule("OperServ")->Get<Anope::string>("modes");
+			if (botmodes.empty())
+				botmodes = IRCD->DefaultPseudoclientModes;
+			if (!botmodes.empty())
+				this->SetModesInternal(this, botmodes.c_str());
+
+			IRCD->SendClientIntroduction(this);
+		}
+	}
+
+	void Join(Channel *c)
+	{
+		if (c->FindUser(this) != NULL)
+			return;
+
+		ChannelStatus status(Config->GetModule("BotServ")->Get<Anope::string>("botmodes", "ao"));
+		c->JoinUser(this, &status);
+		if (IRCD)
+			IRCD->SendJoin(this, c, &status);
+	}
+
+	void Part(Channel *c)
+	{
+		if (c->FindUser(this) == NULL)
+			return;
+
+		IRCD->SendPart(this, c, "Chan Trap deleted");
+		c->DeleteUser(this);
+	}
+
+	~CreatedBotInfo()
+	{
+		if (Me && Me->IsSynced())
+			IRCD->SendQuit(this, "");
+	}
+};
+
+/* This class holds the list of created bots and any needed functions to this module */
 class CreatedBots
 {
  protected:
-	std::map<const BotInfo *, unsigned> Bots;
+	std::map<const CreatedBotInfo *, unsigned> Bots;
 
  public:
 	CreatedBots() { }
 
 	~CreatedBots()
 	{
+		for (std::map<const CreatedBotInfo *, unsigned>::reverse_iterator it = Bots.rbegin(); it != Bots.rend(); ++it)
+			delete it->first;
+
 		Bots.clear();
 	}
 
-	void Add(BotInfo *bi)
+	const unsigned GetCount()
 	{
-		Bots.insert(std::make_pair(bi, 1));
+		return Bots.size();
 	}
 
-	void Del(BotInfo *bi)
+	const CreatedBotInfo *Create()
 	{
-		std::map<const BotInfo*, unsigned>::iterator it = Bots.find(bi);
-		if (it != Bots.end())
-			Bots.erase(it);
+		const unsigned nicklen = Config->GetBlock("networkinfo")->Get<unsigned>("nicklen");
+		Anope::string nick;
+
+		unsigned tries = 0;
+		do
+		{
+			nick = "CT" + stringify(static_cast<uint16_t>(rand()));
+			if (nick.length() > nicklen)
+				nick = nick.substr(0, nicklen);
+		}
+		while (User::Find(nick) && tries++ < 10);
+
+		/* Should never get to this! */
+		if (tries == 11)
+			return NULL;
+
+		const CreatedBotInfo *cbi = new CreatedBotInfo(nick);
+		Bots.insert(std::make_pair(cbi, 0));
+		return cbi;
 	}
 
-	void Increment(const BotInfo *bi)
+	const std::map<const CreatedBotInfo *, unsigned> &GetBots()
 	{
-		std::map<const BotInfo*, unsigned>::iterator it = Bots.find(bi);
+		return Bots;
+	}
+
+	void Join(const CreatedBotInfo *cbi, Channel *c)
+	{
+		std::map<const CreatedBotInfo*, unsigned>::iterator it = Bots.find(cbi);
 		if (it != Bots.end())
+		{
+			const_cast<CreatedBotInfo *>(cbi)->Join(c);
 			++it->second;
+		}
 	}
 
-	void Decrement(const BotInfo *bi)
+	void Part(const CreatedBotInfo *cbi, Channel *c)
 	{
-		std::map<const BotInfo*, unsigned>::iterator it = Bots.find(bi);
+		std::map<const CreatedBotInfo*, unsigned>::iterator it = Bots.find(cbi);
 		if (it == Bots.end())
 			return;
 
+		const_cast<CreatedBotInfo *>(cbi)->Part(c);
 		if (--it->second == 0)
 		{
 			delete (*it).first;
@@ -114,9 +185,18 @@ class CreatedBots
 		}
 	}
 
-	const unsigned GetCount()
+	void TryPart(const User *u, Channel *c)
 	{
-		return Bots.size();
+		for (std::map<const CreatedBotInfo *, unsigned>::reverse_iterator it = Bots.rbegin(); it != Bots.rend(); ++it)
+		{
+			const CreatedBotInfo *cbi = it->first;
+
+			if (cbi->nick == u->nick)
+			{
+				Part(cbi, c);
+				return;
+			}
+		}
 	}
 }
 CreatedBots;
@@ -128,8 +208,6 @@ class ChanTrapList
 	Serialize::Checker<std::vector<ChanTrapInfo *> > chantraps;
 
  public:
-	//std::map<const BotInfo *, unsigned> CreatedBots;
-
 	ChanTrapList() : chantraps("ChanTrap") { }
 
 	~ChanTrapList()
@@ -160,13 +238,10 @@ class ChanTrapList
 						continue;
 
 					BotInfo *bi = BotInfo::Find(u->nick, true);
-					if (!bi)
-						continue;
-
-					bi->Part(c, "Chan Trap deleted");
-
-					if (!bi->conf)
-						CreatedBots.Decrement(bi);
+					if (bi)
+						bi->Part(c, "Chan Trap deleted");
+					else
+						CreatedBots.TryPart(u, c);
 				}
 			}
 		}
@@ -337,7 +412,7 @@ void ApplyToChan(const ChanTrapInfo *ct, Channel *c)
 
 void CreateChan(const ChanTrapInfo *ct, bool created)
 {
-	ChannelStatus status(Config->GetModule("OperServ")->Get<Anope::string>("botmodes", "o"));
+	ChannelStatus status(Config->GetModule("BotServ")->Get<Anope::string>("botmodes", "ao"));
 
 	if (ct->bots == 0)
 		return;
@@ -366,43 +441,47 @@ void CreateChan(const ChanTrapInfo *ct, bool created)
 	for (botinfo_map::const_iterator it = BotListByNick->begin(), it_end = BotListByNick->end(); it != it_end; ++it)
 	{
 		if (joined == ct->bots)
-			break;
+			return;
 
 		BotInfo *bi = it->second;
-		if (bi->nick.equals_ci("OperServ"))
+		if (!bi || bi->nick.equals_ci("OperServ"))
 			continue;
 
 		bi->Join(c, &status);
-		joined++;
+		++joined;
+	}
 
-		CreatedBots.Increment(bi);
+	/* Join any already created bots */
+	if (ct->bots > joined && CreatedBots.GetCount() > 0)
+	{
+		const std::map<const CreatedBotInfo *, unsigned> &bots = CreatedBots.GetBots();
+		for (std::map<const CreatedBotInfo *, unsigned>::const_iterator it = bots.begin(), it_end = bots.end(); it != it_end; ++it)
+		{
+			if (joined == ct->bots)
+				return;
+
+			const CreatedBotInfo *cbi = it->first;
+			if (cbi)
+			{
+				CreatedBots.Join(cbi, c);
+				++joined;
+			}
+		}
 	}
 
 	/* Create more bots to meet the requested count */
 	if (ct->bots > joined)
 	{
-		const unsigned makebots = ct->bots - joined;
-		for (unsigned i = 0; i < makebots; ++i)
+		do
 		{
-			const unsigned nicklen = Config->GetBlock("networkinfo")->Get<unsigned>("nicklen");
-			Anope::string nick;
-
-			unsigned t = 0;
-			do
-			{
-				nick = "CT" + stringify(static_cast<uint16_t>(rand()));
-				if (nick.length() > nicklen)
-					nick = nick.substr(0, nicklen);
-			} while (User::Find(nick) && t++ < 10);
-
-			/* Should never get to this! */
-			if (t == 11)
+			const CreatedBotInfo *cbi = CreatedBots.Create();
+			if (!cbi)
 				continue;
 
-			BotInfo *bi = new BotInfo(nick, "ct", Me->GetName(), "CT Services");
-			bi->Join(c, &status);
-			CreatedBots.Add(bi);
+			CreatedBots.Join(cbi, c);
+			++joined;
 		}
+		while (joined < ct->bots);
 	}
 }
 
@@ -433,8 +512,9 @@ class CommandOSChanTrap : public Command
 		Anope::string mask, saction, sduration, modes, reason;
 		unsigned bots;
 
-		// Expecting: ADD mask bots action duration modes reason
-		//	ADD #test99 5 kill 0 +nts test chantrap channel
+		/* Expecting: ADD mask bots action duration modes reason
+		 *	      ADD #test99 5 kill 0 +nts test chantrap channel
+		 */
 
 		if (params.size() < 7)
 		{
@@ -740,7 +820,7 @@ class CommandOSChanTrap : public Command
 			{
 				const ChanTrapInfo *ct = ChanTrapList.Get(i);
 				if (!ct)
-					return;
+					continue;
 
 				if (match.empty() || match.equals_ci(ct->mask) || Anope::Match(ct->mask, match, false, true))
 				{
@@ -889,7 +969,7 @@ class CommandOSChanTrap : public Command
 			     "Mask is a real channel name for active channels or a (wildcard) mask for non-active channels.\n"
 			     "Bot Count is how many bots idle in the channel.\n"
 			     "Action is one of KILL or AKILL.\n"
-			     "Duration is action duration, ignored for KILL.\n"
+			     "Duration is akill duration, ignored for KILL.\n"
 			     "Modes will be set and held on an active channel (ex: +nts-k).\n"
 			     "Reason is a reason for the Chan Trap.");
 
@@ -930,6 +1010,8 @@ class OSChanTrap : public Module
 
 	void Init()
 	{
+		OperServ = Config->GetClient("OperServ");
+
 		if (ChanTrapList.GetCount() == 0)
 			return;
 
@@ -956,9 +1038,9 @@ class OSChanTrap : public Module
 		}
 
 		if (matched_chans > 0)
-			Log(LOG_ADMIN, "ChanTrap Init") << chantraps.size() << " chan trap(s) matched " << matched_chans << " channel(s).";
+			Log(LOG_ADMIN, "ChanTrap Init", OperServ) << chantraps.size() << " chan trap(s) matched " << matched_chans << " channel(s).";
 		if (created_chans > 0)
-			Log(LOG_ADMIN, "ChanTrap Init") << chantraps.size() << " chan trap(s) created " << created_chans << " channel(s).";
+			Log(LOG_ADMIN, "ChanTrap Init", OperServ) << chantraps.size() << " chan trap(s) created " << created_chans << " channel(s).";
 	}
 
  public:
@@ -969,7 +1051,7 @@ class OSChanTrap : public Module
 			throw ModuleException("Requires version 2.0.x of Anope.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("0.6.0");
+		this->SetVersion("1.0.0");
 
 		if (Me && Me->IsSynced())
 			this->Init();
@@ -977,7 +1059,7 @@ class OSChanTrap : public Module
 
 	void OnReload(Configuration::Conf *conf) anope_override
 	{
-		OperServ = Config->GetClient("OperServ");
+		OperServ = conf->GetClient("OperServ");
 		kill_reason = conf->GetModule(this)->Get<Anope::string>("kill_reason", "I know what you did last join!");
 		akill_reason = conf->GetModule(this)->Get<Anope::string>("akill_reason", "You found yourself a disappearing act!");
 	}
