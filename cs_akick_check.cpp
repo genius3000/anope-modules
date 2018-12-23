@@ -26,7 +26,7 @@ class CSAkickCheck : public Module
 			throw ModuleException("Requires version 2.0.x of Anope.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("0.9.0");
+		this->SetVersion("1.0.0");
 	}
 
 	void OnUplinkSync(Server *) anope_override
@@ -55,6 +55,15 @@ class CSAkickCheck : public Module
 			if (c)
 				c->CheckKick(u);
 		}
+	}
+
+	// Hacky way to catch IDENT changes.
+	void OnLog(Log *l) anope_override
+	{
+		if (!Me || !Me->IsSynced() || l->type != LOG_USER || l->u == NULL || l->category != "ident")
+			return;
+
+		CheckAkicks(l->u);
 	}
 
 	void OnNickGroup(User *u, NickAlias *) anope_override
