@@ -410,12 +410,13 @@ void ApplyToChan(const ChanTrapInfo *ct, Channel *c)
 	}
 }
 
-void CreateChan(const ChanTrapInfo *ct, bool created)
+bool CreateChan(const ChanTrapInfo *ct)
 {
-	ChannelStatus status(Config->GetModule("BotServ")->Get<Anope::string>("botmodes", "ao"));
-
 	if (ct->bots == 0)
-		return;
+		return false;
+
+	ChannelStatus status(Config->GetModule("BotServ")->Get<Anope::string>("botmodes", "ao"));
+	bool created = false;
 
 	/* Create or take over the channel (remove modes then set ours) */
 	Channel *c = Channel::FindOrCreate(ct->mask, created);
@@ -441,7 +442,7 @@ void CreateChan(const ChanTrapInfo *ct, bool created)
 	for (botinfo_map::const_iterator it = BotListByNick->begin(), it_end = BotListByNick->end(); it != it_end; ++it)
 	{
 		if (joined == ct->bots)
-			return;
+			return created;
 
 		BotInfo *bi = it->second;
 		if (!bi || bi->nick.equals_ci("OperServ"))
@@ -458,7 +459,7 @@ void CreateChan(const ChanTrapInfo *ct, bool created)
 		for (std::map<const CreatedBotInfo *, unsigned>::const_iterator it = bots.begin(), it_end = bots.end(); it != it_end; ++it)
 		{
 			if (joined == ct->bots)
-				return;
+				return created;
 
 			const CreatedBotInfo *cbi = it->first;
 			if (cbi)
@@ -483,6 +484,8 @@ void CreateChan(const ChanTrapInfo *ct, bool created)
 		}
 		while (joined < ct->bots);
 	}
+
+	return created;
 }
 
 const unsigned FindMatches(const ChanTrapInfo *ct)
@@ -714,7 +717,7 @@ class CommandOSChanTrap : public Command
 			if (c)
 				matched = true;
 
-			CreateChan(ct, NULL);
+			CreateChan(ct);
 
 			ChannelInfo *ci = ChannelInfo::Find(ct->mask);
 			if (ci)
@@ -1027,10 +1030,7 @@ class OSChanTrap : public Module
 				matched_chans += FindMatches(ct);
 			else
 			{
-				bool cr = false;
-				CreateChan(ct, cr);
-
-				if (cr)
+				if (CreateChan(ct))
 					created_chans++;
 				else
 					matched_chans++;
