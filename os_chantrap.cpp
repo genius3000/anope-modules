@@ -1060,8 +1060,8 @@ class OSChanTrap : public Module
 	void OnReload(Configuration::Conf *conf) anope_override
 	{
 		OperServ = conf->GetClient("OperServ");
-		kill_reason = conf->GetModule(this)->Get<Anope::string>("kill_reason", "I know what you did last join!");
-		akill_reason = conf->GetModule(this)->Get<Anope::string>("akill_reason", "You found yourself a disappearing act!");
+		kill_reason = conf->GetModule(this)->Get<Anope::string>("killreason", "I know what you did last join!");
+		akill_reason = conf->GetModule(this)->Get<Anope::string>("akillreason", "You found yourself a disappearing act!");
 	}
 
 	void OnUplinkSync(Server *) anope_override
