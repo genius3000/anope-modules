@@ -418,8 +418,9 @@ bool CreateChan(const ChanTrapInfo *ct)
 	ChannelStatus status(Config->GetModule("BotServ")->Get<Anope::string>("botmodes", "ao"));
 	bool created = false;
 
-	/* Create or take over the channel (remove modes then set ours) */
+	/* Create or takeover the channel, remove users and change modes as needed. */
 	Channel *c = Channel::FindOrCreate(ct->mask, created);
+	OperServ->Join(c, &status);
 	if (!created)
 	{
 		for (Channel::ModeList::const_iterator it = c->GetModes().begin(); it != c->GetModes().end(); )
@@ -431,9 +432,6 @@ bool CreateChan(const ChanTrapInfo *ct)
 		}
 	}
 	c->SetModes(OperServ, false, ct->modes.c_str());
-
-	/* Join OperServ to hold the channel while we zap any existing users (if needed) */
-	OperServ->Join(c, &status);
 	if (!created)
 		ApplyToChan(ct, c);
 
