@@ -1049,7 +1049,7 @@ class OSChanTrap : public Module
 			throw ModuleException("Requires version 2.0.x of Anope.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.0.0");
+		this->SetVersion("1.0.1");
 
 		if (Me && Me->IsSynced())
 			this->Init();
