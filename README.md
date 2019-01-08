@@ -3,7 +3,7 @@ Third Party modules for Anope that I've created.
 The proper place to view and download these modules is on the [Anope IRC Services Modules Site](https://modules.anope.org/index.php?page=home).  
 I'll give a short summary of each module here anyways.
 
-### cs_akick_check
+### [cs_akick_check](https://modules.anope.org/index.php?page=view&id=288 "View module on the Anope Module Site")
 Check channel AKICKs upon services start and when a user does something that would
 affect the matching of an AKICK (logs in/out, nick change, vIdent/vHost, etc).
 
