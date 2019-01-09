@@ -1,7 +1,7 @@
 /*
  * OperServ Notify
  *
- * (C) 2017-2018 - genius3000 (genius3000@g3k.solutions)
+ * (C) 2017-2019 - genius3000 (genius3000@g3k.solutions)
  * Please refer to the GPL License in use by Anope at:
  * https://github.com/anope/anope/blob/master/docs/COPYING
  *
@@ -365,6 +365,7 @@ class CommandOSNotify : public Command
 		/* Acceptable flags are:
 		 * c = Connects
 		 * d = Disconnects
+		 * i = channel Invites
 		 * j = channel Joins
 		 * k = channel Kicks
 		 * m = channel Modes
@@ -375,7 +376,7 @@ class CommandOSNotify : public Command
 		 * t = Topics
 		 * u = Usermodes
 		 */
-		const Anope::string all_flags = "Scdjkmnpstu";
+		const Anope::string all_flags = "Scdijkmnpstu";
 		str_flags = params[2];
 
 		if (str_flags == "*")
@@ -840,12 +841,12 @@ class CommandOSNotify : public Command
 			     "If a real name is specified, the reason must be prepended with a :.\n"
 			     "Flags are used to decide what to track, for all use \037*\037.\n"
 			     "The available flags are:\n"
-			     "c - User Connections\td - User Disconnections\n"
-			     "j - Channel Joins\tk - Channel Kicks\n"
-			     "m - Channel Modes\tn - User Nick changes\n"
-			     "p - Channel Parts\ts - Most Services commands\n"
-			     "t - Channel Topics\tu - User Modes\n"
-			     "S - More Services commands\n"
+			     "c - User Connections\nd - User Disconnections\n"
+			     "i - Channel Invites\nj - Channel Joins\n"
+			     "k - Channel Kicks\nm - Channel Modes\n"
+			     "n - User Nick changes\np - Channel Parts\n"
+			     "s - Most Services commands\nS - More Services commands\n"
+			     "t - Channel Topics\nu - User Modes\n"
 			     "\037expiry\037 is specified as an integer followed by one of \037d\37 (days),\n"
 			     " \037h\037 (hours), or \037m\037 (minutes). Combinations (such as \0371h30m\037)\n"
 			     "are not permitted. If a unit specifier is not included, the default is days\n"
@@ -992,7 +993,7 @@ class OSNotify : public Module
 			throw ModuleException("Requires version 2.0.x of Anope.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.1.0");
+		this->SetVersion("1.2.0");
 
 		if (Me && Me->IsSynced())
 			this->Init();
@@ -1169,6 +1170,22 @@ class OSNotify : public Module
 			NLog("channel", "%s changed topic on %s to %s", BuildNUHR(u).c_str(), c->name.c_str(), topic.c_str());
 	}
 
+	void UserInvite(const Anope::string &source, const Anope::string &target, const Anope::string &chan)
+	{
+		User *src = User::Find(source, false);
+		if (src && NotifyList.HasFlag(src, 'i'))
+		{
+			User *dst = User::Find(target, false);
+			NLog("channel", "%s invited %s to %s", BuildNUHR(src).c_str(), (dst ? BuildNUHR(dst).c_str() : target.c_str()), chan.c_str());
+		}
+		else
+		{
+			User *dst = User::Find(target, false);
+			if (dst && NotifyList.HasFlag(dst, 'i'))
+				NLog("channel", "%s invited %s to %s", (src ? BuildNUHR(src).c_str() : source.c_str()), BuildNUHR(dst).c_str(), chan.c_str());
+		}
+	}
+
 	void OnPostCommand(CommandSource &source, Command *command, const std::vector<Anope::string> &params) anope_override
 	{
 		const User *u = source.GetUser();
@@ -1176,6 +1193,9 @@ class OSNotify : public Module
 			return;
 
 		const Anope::string &cmd = command->name;
+		if (cmd == "chanserv/invite" && !params.empty())
+			UserInvite(source.GetNick(), (params.size() > 1 ? params[1] : source.GetNick()), params[0]);
+
 		if ((!NotifyList.HasFlag(u, 's') && !Anope::Match(cmd, "*/set/*")) ||
 		    (!NotifyList.HasFlag(u, 'S') && Anope::Match(cmd, "*/set/*")))
 			return;
@@ -1193,6 +1213,14 @@ class OSNotify : public Module
 		const Anope::string scmd = source.service->nick + " " + cmd.substr(cmd.find('/') + 1).replace_all_ci("/", " ").upper();
 
 		NLog("commands", "%s used %s [%s]", BuildNUHR(u).c_str(), scmd.c_str(), (strparams.empty() ? "" : strparams.c_str()));
+	}
+
+	EventReturn OnMessage(MessageSource &source, Anope::string &command, std::vector<Anope::string> &params) anope_override
+	{
+		if (command == "INVITE" && params.size() > 1)
+			UserInvite(source.GetName(), params[0], params[1]);
+
+		return EVENT_CONTINUE;
 	}
 };
 
