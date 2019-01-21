@@ -993,7 +993,7 @@ class OSNotify : public Module
 			throw ModuleException("Requires version 2.0.x of Anope.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.2.0");
+		this->SetVersion("1.2.1");
 
 		if (Me && Me->IsSynced())
 			this->Init();
@@ -1018,7 +1018,7 @@ class OSNotify : public Module
 		if (matches > 0)
 		{
 			if (NotifyList.HasFlag(u, 'c'))
-				NLog("user", "%s connected [matches %d Notify mask(s)]", BuildNUHR(u).c_str(), matches);
+				NLog("user", "'%s' connected [matches %d Notify mask(s)]", BuildNUHR(u).c_str(), matches);
 		}
 	}
 
@@ -1027,7 +1027,7 @@ class OSNotify : public Module
 		if (NotifyList.IsMatch(u))
 		{
 			if (NotifyList.HasFlag(u, 'd'))
-				NLog("user", "%s disconnected (reason: %s)", BuildNUHR(u).c_str(), msg.c_str());
+				NLog("user", "'%s' disconnected (reason: %s)", BuildNUHR(u).c_str(), msg.c_str());
 
 			NotifyList.DelMatch(u);
 		}
@@ -1049,12 +1049,12 @@ class OSNotify : public Module
 		if (matches > 0)
 		{
 			if (oldmatch)
-				NLog("user", "%s changed nick to %s [matches an additional %d Notify mask(s)]", nuhr.c_str(), u->nick.c_str(), matches);
+				NLog("user", "'%s' changed nick to %s [matches an additional %d Notify mask(s)]", nuhr.c_str(), u->nick.c_str(), matches);
 			else
-				NLog("user", "%s changed nick to %s [matches %d Notify mask(s)]", nuhr.c_str(), u->nick.c_str(), matches);
+				NLog("user", "'%s' changed nick to %s [matches %d Notify mask(s)]", nuhr.c_str(), u->nick.c_str(), matches);
 		}
 		else if (oldmatch)
-			NLog("user", "%s changed nick to %s", nuhr.c_str(), u->nick.c_str());
+			NLog("user", "'%s' changed nick to %s", nuhr.c_str(), u->nick.c_str());
 	}
 
 	void OnJoinChannel(User *u, Channel *c) anope_override
@@ -1072,18 +1072,18 @@ class OSNotify : public Module
 		if (matches > 0)
 		{
 			if (oldmatch)
-				NLog("channel", "%s joined %s [matches an additional %d Notify mask(s)]", BuildNUHR(u).c_str(), c->name.c_str(), matches);
+				NLog("channel", "'%s' joined %s [matches an additional %d Notify mask(s)]", BuildNUHR(u).c_str(), c->name.c_str(), matches);
 			else
-				NLog("channel", "%s joined %s [matches %d Notify mask(s)]", BuildNUHR(u).c_str(), c->name.c_str(), matches);
+				NLog("channel", "'%s' joined %s [matches %d Notify mask(s)]", BuildNUHR(u).c_str(), c->name.c_str(), matches);
 		}
 		else if (oldmatch)
-			NLog("channel", "%s joined %s", BuildNUHR(u).c_str(), c->name.c_str());
+			NLog("channel", "'%s' joined %s", BuildNUHR(u).c_str(), c->name.c_str());
 	}
 
 	void OnPartChannel(User *u, Channel *c, const Anope::string &channel, const Anope::string &msg) anope_override
 	{
 		if (NotifyList.HasFlag(u, 'p'))
-			NLog("channel", "%s parted %s (reason: %s)", BuildNUHR(u).c_str(), c->name.c_str(), msg.c_str());
+			NLog("channel", "'%s' parted %s (reason: %s)", BuildNUHR(u).c_str(), c->name.c_str(), msg.c_str());
 	}
 
 	void OnUserKicked(const MessageSource &source, User *target, const Anope::string &channel, ChannelStatus &status, const Anope::string &kickmsg) anope_override
@@ -1091,10 +1091,10 @@ class OSNotify : public Module
 		User *u = source.GetUser();
 
 		if (NotifyList.HasFlag(target, 'k'))
-			NLog("channel", "%s was kicked from %s by %s (reason: %s)", BuildNUHR(target).c_str(), channel.c_str(), (u ? u->nick.c_str() : "unknown"), kickmsg.c_str());
+			NLog("channel", "'%s' was kicked from %s by %s (reason: %s)", BuildNUHR(target).c_str(), channel.c_str(), (u ? u->nick.c_str() : "unknown"), kickmsg.c_str());
 
 		if (u && NotifyList.HasFlag(u, 'k'))
-			NLog("channel", "%s kicked %s from %s (reason: %s)", BuildNUHR(u).c_str(), BuildNUHR(target).c_str(), channel.c_str(), kickmsg.c_str());
+			NLog("channel", "'%s' kicked %s from %s (reason: %s)", BuildNUHR(u).c_str(), target->nick.c_str(), channel.c_str(), kickmsg.c_str());
 	}
 
 	void OnUserMode(const MessageSource &setter, User *u, const Anope::string &mname, bool setting)
@@ -1103,9 +1103,9 @@ class OSNotify : public Module
 		UserMode *um = ModeManager::FindUserModeByName(mname);
 
 		if (setter.GetUser() && setter.GetUser() != u)
-			NLog("user", "%s %sset mode %c (%s) on %s", setter.GetUser()->nick.c_str(), (setting ? "" : "un"), (um ? um->mchar : '\0'), mname.c_str(), nuhr.c_str());
+			NLog("user", "%s %sset mode %c (%s) on '%s'", setter.GetUser()->nick.c_str(), (setting ? "" : "un"), (um ? um->mchar : '\0'), mname.c_str(), nuhr.c_str());
 		else
-			NLog("user", "%s %sset mode %c (%s)", nuhr.c_str(), (setting ? "" : "un"), (um ? um->mchar : '\0'), mname.c_str());
+			NLog("user", "'%s' %sset mode %c (%s)", nuhr.c_str(), (setting ? "" : "un"), (um ? um->mchar : '\0'), mname.c_str());
 	}
 
 	void OnUserModeSet(const MessageSource &setter, User *u, const Anope::string &mname) anope_override
@@ -1131,16 +1131,16 @@ class OSNotify : public Module
 			if (mode->type == MODE_STATUS)
 			{
 				const User *target = User::Find(param, false);
-				NLog("channel", "%s %sset channel mode %c (%s) on %s on %s", BuildNUHR(u).c_str(), (setting ? "" : "un"), mode->mchar, mode->name.c_str(), (target ? target->nick.c_str() : "unknown"), c->name.c_str());
+				NLog("channel", "'%s' %sset channel mode %c (%s) on %s on %s", BuildNUHR(u).c_str(), (setting ? "" : "un"), mode->mchar, mode->name.c_str(), (target ? target->nick.c_str() : "unknown"), c->name.c_str());
 			}
 			else
-				NLog("channel", "%s %sset channel mode %c (%s) [%s] on %s", BuildNUHR(u).c_str(), (setting ? "" : "un"), mode->mchar, mode->name.c_str(), (param.empty() ? "" : param.c_str()), c->name.c_str());
+				NLog("channel", "'%s' %sset channel mode %c (%s) [%s] on %s", BuildNUHR(u).c_str(), (setting ? "" : "un"), mode->mchar, mode->name.c_str(), (param.empty() ? "" : param.c_str()), c->name.c_str());
 		}
 		else if (mode->type == MODE_STATUS)
 		{
 			const User *target = User::Find(param, false);
 			if (target && NotifyList.HasFlag(target, 'm'))
-				NLog("channel", "%s %sset channel mode %c (%s) on %s on %s", u->nick.c_str(), (setting ? "" : "un"), mode->mchar, mode->name.c_str(), BuildNUHR(target).c_str(), c->name.c_str());
+				NLog("channel", "%s %sset channel mode %c (%s) on '%s' on %s", u->nick.c_str(), (setting ? "" : "un"), mode->mchar, mode->name.c_str(), BuildNUHR(target).c_str(), c->name.c_str());
 		}
 	}
 
@@ -1167,22 +1167,21 @@ class OSNotify : public Module
 		const User *u = source ? source : User::Find(user, false);
 
 		if (u && NotifyList.HasFlag(u, 't'))
-			NLog("channel", "%s changed topic on %s to %s", BuildNUHR(u).c_str(), c->name.c_str(), topic.c_str());
+			NLog("channel", "'%s' changed topic on %s to %s", BuildNUHR(u).c_str(), c->name.c_str(), topic.c_str());
 	}
 
 	void UserInvite(const Anope::string &source, const Anope::string &target, const Anope::string &chan)
 	{
 		User *src = User::Find(source, false);
+		User *dst = User::Find(target, false);
+
 		if (src && NotifyList.HasFlag(src, 'i'))
 		{
-			User *dst = User::Find(target, false);
-			NLog("channel", "%s invited %s to %s", BuildNUHR(src).c_str(), (dst ? BuildNUHR(dst).c_str() : target.c_str()), chan.c_str());
+			NLog("channel", "'%s' invited %s to %s", BuildNUHR(src).c_str(), (dst ? dst->nick.c_str() : target.c_str()), chan.c_str());
 		}
-		else
+		else if (dst && NotifyList.HasFlag(dst, 'i'))
 		{
-			User *dst = User::Find(target, false);
-			if (dst && NotifyList.HasFlag(dst, 'i'))
-				NLog("channel", "%s invited %s to %s", (src ? BuildNUHR(src).c_str() : source.c_str()), BuildNUHR(dst).c_str(), chan.c_str());
+			NLog("channel", "%s invited '%s' to %s", (src ? src->nick.c_str() : source.c_str()), BuildNUHR(dst).c_str(), chan.c_str());
 		}
 	}
 
@@ -1212,7 +1211,7 @@ class OSNotify : public Module
 
 		const Anope::string scmd = source.service->nick + " " + cmd.substr(cmd.find('/') + 1).replace_all_ci("/", " ").upper();
 
-		NLog("commands", "%s used %s [%s]", BuildNUHR(u).c_str(), scmd.c_str(), (strparams.empty() ? "" : strparams.c_str()));
+		NLog("commands", "'%s' used %s [%s]", BuildNUHR(u).c_str(), scmd.c_str(), (strparams.empty() ? "" : strparams.c_str()));
 	}
 
 	EventReturn OnMessage(MessageSource &source, Anope::string &command, std::vector<Anope::string> &params) anope_override
