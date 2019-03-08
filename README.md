@@ -32,6 +32,12 @@ To send a notice (via email and/or memo) to a user that their registered nicknam
 channel is soon to expire and/or expired. Fully configurable with what to send for and
 how to send the notices, when to send the pre-expiry notices, and the messages sent.
 
+### m_insp_joinpartspam
+Adds (almost) proper support for the InspIRCd 2.0 Extras module m_joinpartspam. Use
+this module to ensure the mode is not abusable through ChanServ MODE. Channel redirects
+with this mode are disallowed here, as we can't verify the parameter.
+Requires a restart to load, can be reloaded live though.
+
 ### [m_xlinetoakill](https://modules.anope.org/index.php?page=view&id=285 "View module on the Anope Module Site")
 Syncs X-Lines (G, Z, R) from the uplink IRCd to the AKILL list. Works on server sync
 and as X-Lines are added or removed. Requires OperServ, AKILL, and the InspIRCd 2.0
