@@ -26,9 +26,16 @@ class ChannelModeJoinPartSpam : public ChannelModeParam
 		if (!stream.GetToken(strcycles))
 			return false;
 
-		int result = convertTo<int>(strcycles);
-		if (result < 2 || result > 20)
+		try
+		{
+			int result = convertTo<int>(strcycles);
+			if (result < 2 || result > 20)
+				return false;
+		}
+		catch (const ConvertException &)
+		{
 			return false;
+		}
 
 		return true;
 	}
@@ -39,9 +46,16 @@ class ChannelModeJoinPartSpam : public ChannelModeParam
 		if (!stream.GetToken(strseconds))
 			return false;
 
-		int result = convertTo<int>(strseconds);
-		if (result < 1 || result > 43200)
+		try
+		{
+			int result = convertTo<int>(strseconds);
+			if (result < 1 || result > 43200)
+				return false;
+		}
+		catch (const ConvertException &)
+		{
 			return false;
+		}
 
 		return true;
 	}
@@ -88,7 +102,7 @@ class InspJoinPartSpam : public Module
 			throw ModuleException("A channel mode with character '" + Anope::string(modechar) + "' already exists.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.0.0");
+		this->SetVersion("1.0.1");
 		me = this;
 		ModeManager::AddChannelMode(new ChannelModeJoinPartSpam(modename, modechar));
 	}
