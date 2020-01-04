@@ -30,14 +30,14 @@ class XLineToAkill : public Module
 		if (Anope::VersionMajor() != 2 || Anope::VersionMinor() != 0)
 			throw ModuleException("Requires version 2.0.x of Anope.");
 
-		if (!ModuleManager::FindModule("inspircd20"))
-			throw ModuleException("This module only works with the InspIRCd 2.0 protocol.");
+		if (IRCD->GetProtocolName().find("InspIRCd") == std::string::npos)
+			throw ModuleException("This module only works with InspIRCd.");
 
 		if (!ModuleManager::FindModule("operserv") || !ModuleManager::FindModule("os_akill"))
 			throw ModuleException("This module requires both OperServ and OS_AKILL to function.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.0.0");
+		this->SetVersion("1.0.1");
 	}
 
 	void OnReload(Configuration::Conf *conf) anope_override

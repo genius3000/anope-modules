@@ -1,5 +1,5 @@
 /*
- * Support for InspIRCd 2.0 Extras m_joinpartspam.
+ * Support for InspIRCd 2.0 & 3 Contrib m_joinpartspam.
  *
  * (C) 2019 - Matt Schatz (genius3000@g3k.solutions)
  * Please refer to the GPL License in use by Anope at:
@@ -94,15 +94,15 @@ class InspJoinPartSpam : public Module
 		if (Anope::VersionMajor() != 2 || Anope::VersionMinor() != 0)
 			throw ModuleException("Requires version 2.0.x of Anope.");
 
-		if (!ModuleManager::FindModule("inspircd20"))
-			throw ModuleException("This module only works with the InspIRCd 2.0 protocol.");
+		if (!ModuleManager::FindModule("inspircd20") && !ModuleManager::FindModule("inspircd3"))
+			throw ModuleException("This module only works with InspIRCd versions 2.0.x and 3.x.");
 
 		ChannelMode *cm = ModeManager::FindChannelModeByChar(modechar);
 		if (cm)
 			throw ModuleException("A channel mode with character '" + Anope::string(modechar) + "' already exists.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.0.1");
+		this->SetVersion("1.0.2");
 		me = this;
 		ModeManager::AddChannelMode(new ChannelModeJoinPartSpam(modename, modechar));
 	}
