@@ -67,7 +67,7 @@ class CommandOSRegSet : public Command
 			NickAlias *na = NickAlias::Find(target);
 			if (!na)
 			{
-				source.Reply("Nick %s is not registered.", target.c_str());
+				source.Reply(NICK_X_NOT_REGISTERED, target.c_str());
 				return;
 			}
 
