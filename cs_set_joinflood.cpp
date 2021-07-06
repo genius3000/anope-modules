@@ -134,11 +134,19 @@ class CommandCSSetJoinFlood : public Command
 			time_t duration = 60;
 			if (params.size() >= 3)
 			{
-				joins = convertTo<unsigned int>(params[2]);
-				if (params.size() >= 4)
-					secs = convertTo<time_t>(params[3]);
-				if (params.size() == 5)
-					duration = convertTo<time_t>(params[4]);
+				try
+				{
+					joins = convertTo<unsigned int>(params[2]);
+					if (params.size() >= 4)
+						secs = convertTo<time_t>(params[3]);
+					if (params.size() == 5)
+						duration = convertTo<time_t>(params[4]);
+				}
+				catch (const ConvertException &)
+				{
+					source.Reply("Invalid value given for joins, secs, and/or duration.");
+					return;
+				}
 			}
 
 			Log(source.AccessFor(ci).HasPriv("SET") ? LOG_COMMAND : LOG_OVERRIDE, source, this, ci) << "to enable join flood protection";
@@ -256,7 +264,7 @@ class CSSetJoinFlood : public Module
 			throw ModuleException("Requires version 2.0.x of Anope.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.0.2");
+		this->SetVersion("1.0.3");
 
 		if (Me && Me->IsSynced())
 			this->Init();

@@ -37,7 +37,7 @@ class XLineToAkill : public Module
 			throw ModuleException("This module requires both OperServ and OS_AKILL to function.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.0.1");
+		this->SetVersion("1.0.2");
 	}
 
 	void OnReload(Configuration::Conf *conf) anope_override
@@ -82,9 +82,18 @@ class XLineToAkill : public Module
 				return EVENT_CONTINUE;
 
 			const Anope::string setby = params[2];
-			time_t settime = convertTo<time_t>(params[3]);
-			time_t duration = convertTo<time_t>(params[4]);
 			const Anope::string reason = params[5];
+
+			try
+			{
+				time_t settime = convertTo<time_t>(params[3]);
+				time_t duration = convertTo<time_t>(params[4]);
+			}
+			catch (const ConvertException &)
+			{
+				Log(OperServ, "akill/sync") << "X-Line (" << linetype << ") sync received with malformed set time and/or duration for: " << mask << " (" << reason << ") [set by " << setby << "]: set time: '" << params[3] << "' duration: '" << params[4] << "'";
+				return EVENT_CONTINUE;
+			}
 
 			time_t expires = (duration == 0) ? duration : settime + duration;
 

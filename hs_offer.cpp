@@ -689,8 +689,18 @@ class CommandHSOfferList : public Command
 
 		if (match.find_first_not_of("1234567890") == Anope::string::npos)
 		{
-			const unsigned number = convertTo<unsigned>(match);
-			ho = HostOffersList.Get(number - 1);
+			try
+			{
+				const unsigned number = convertTo<unsigned>(match);
+				if (number > 0)
+					ho = HostOffersList.Get(number - 1);
+			}
+			catch (const ConvertException &)
+			{
+				source.Reply("'%s' is an invalid entry number", match.c_str());
+				return;
+			}
+
 			if (!ho)
 			{
 				source.Reply("%d is an invalid entry number", number);
@@ -909,7 +919,7 @@ class HSOffer : public Module
 			throw ModuleException("Requires version 2.0.x of Anope.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.0.1");
+		this->SetVersion("1.0.2");
 	}
 
 	void OnReload(Configuration::Conf *conf) anope_override

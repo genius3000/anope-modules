@@ -524,11 +524,20 @@ class CommandOSChanTrap : public Command
 		}
 
 		mask = params[1];
-		bots = convertTo<unsigned>(params[2]);
 		saction = params[3];
 		sduration = params[4];
 		modes = params[5];
 		reason = params[6];
+
+		try
+		{
+			bots = convertTo<unsigned>(params[2]);
+		}
+		catch (const ConvertException &)
+		{
+			source.Reply("Invalid number of bots: '%s' is not valid for number of bots.", params[2].c_str());
+			return;
+		}
 
 		if (bots == 0 && mask.replace_all_cs("?*", "").empty())
 
@@ -1049,7 +1058,7 @@ class OSChanTrap : public Module
 			throw ModuleException("Requires version 2.0.x of Anope.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.0.1");
+		this->SetVersion("1.0.2");
 
 		if (Me && Me->IsSynced())
 			this->Init();
