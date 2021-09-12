@@ -703,7 +703,7 @@ class CommandHSOfferList : public Command
 
 			if (!ho)
 			{
-				source.Reply("%d is an invalid entry number", number);
+				source.Reply("%s is an invalid entry number", match.c_str());
 				return;
 			}
 		}
