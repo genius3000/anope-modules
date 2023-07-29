@@ -308,7 +308,7 @@ class CommandCSSetTopicHistory : public Command
 		else if (params[1].equals_ci("OFF"))
 		{
 			Log(source.AccessFor(ci).HasPriv("SET") ? LOG_COMMAND : LOG_OVERRIDE, source, this, ci) << "to disable topichistory";
-			source.Reply("Topic history option for %s is now \002off\022.", ci->name.c_str());
+			source.Reply("Topic history option for %s is now \002off\002.", ci->name.c_str());
 
 			ci->Shrink<bool>("TOPICHISTORY");
 			ci->Shrink<TopicHistoryList>("topichistorylist");
