@@ -597,7 +597,7 @@ class OSSWhois : public Module
 	Serialize::Type swhoisentry_type;
 	CommandOSSWhois commandosswhois;
 
-	void SetSWhois(const User *u, const SWhoisEntry *entry)
+	void SetSWhois(User *u, const SWhoisEntry *entry)
 	{
 		IRCD->SendSWhois(OperServ, u->nick, entry->swhois);
 		if (Config->GetModule(this)->Get<bool>("notifyonlogin", "yes"))
@@ -640,7 +640,7 @@ class OSSWhois : public Module
 		SWhoisEntry *entry;
 		if (useaccount)
 		{
-			entry = SWhoisList.GetEntry(u->nc->display);
+			entry = SWhoisList.GetEntry(u->Account()->display);
 		}
 		else
 		{
