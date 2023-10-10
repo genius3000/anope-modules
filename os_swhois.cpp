@@ -1,7 +1,7 @@
 /*
  * OperServ SWhois
  *
- * (C) 2017 - genius3000 (genius3000@g3k.solutions)
+ * (C) 2017-2023 - Matt Schatz (genius3000@g3k.solutions)
  * Please refer to the GPL License in use by Anope at:
  * https://github.com/anope/anope/blob/master/docs/COPYING
  * Based off (but written from scratch for 2.0.x and) the previous OS_SWHOIS by
@@ -597,7 +597,7 @@ class OSSWhois : public Module
 	Serialize::Type swhoisentry_type;
 	CommandOSSWhois commandosswhois;
 
-	void SetSWhois(User *u, const NickAlias *na, const SWhoisEntry *entry)
+	void SetSWhois(const User *u, const SWhoisEntry *entry)
 	{
 		IRCD->SendSWhois(OperServ, u->nick, entry->swhois);
 		if (Config->GetModule(this)->Get<bool>("notifyonlogin", "yes"))
@@ -617,7 +617,7 @@ class OSSWhois : public Module
 			throw ModuleException("Requires version 2.0.x of Anope.");
 
 		this->SetAuthor("genius3000");
-		this->SetVersion("1.0.0");
+		this->SetVersion("1.0.1");
 	}
 
 	void OnReload(Configuration::Conf *conf) anope_override
@@ -638,9 +638,19 @@ class OSSWhois : public Module
 			return;
 
 		SWhoisEntry *entry;
-		const NickAlias *na = NickAlias::Find(u->nick);
-		if (na && (entry = SWhoisList.GetEntry(na->nick)))
-			SetSWhois(u, na, entry);
+		if (useaccount)
+		{
+			entry = SWhoisList.GetEntry(u->nc->display);
+		}
+		else
+		{
+			const NickAlias *na = NickAlias::Find(u->nick);
+			if (na)
+				entry = SWhoisList.GetEntry(na->nick);
+		}
+
+		if (entry)
+			SetSWhois(u, entry);
 	}
 
 	void OnNickLogout(User *u) anope_override
@@ -663,7 +673,7 @@ class OSSWhois : public Module
 		const NickAlias *ona = NickAlias::Find(oldnick);
 
 		if (na && (entry = SWhoisList.GetEntry(na->nick)))
-			SetSWhois(u, na, entry);
+			SetSWhois(u, entry);
 		else if (ona && (SWhoisList.GetEntry(ona->nick)))
 			UnSetSWhois(u);
 	}
